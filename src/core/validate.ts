@@ -1,0 +1,53 @@
+// 生成前结构断言（PROJECT_SPEC.md 5.8）：断言失败直接抛错，不产出文件
+import { LuaTable } from './luaTable';
+
+function need(cond: unknown, msg: string): void {
+  if (!cond) throw new Error(`存档校验失败: ${msg}`);
+}
+
+export function validateSave(root: LuaTable): void {
+  need(root.get('STATE') === 7, 'STATE 应为 7（盲注选择界面）');
+  need(root.get('VERSION') === '1.0.1o-FULL', 'VERSION 应为 1.0.1o-FULL');
+
+  const game = root.get('GAME');
+  need(game instanceof LuaTable, '缺少 GAME 表');
+  const g = game as LuaTable;
+  need(g.get('round') === 0, 'GAME.round 应为 0');
+  const rr = g.get('round_resets') as LuaTable;
+  need(rr instanceof LuaTable && rr.get('ante') === 1, 'round_resets.ante 应为 1（起始底注未开放）');
+  const blindAnte = rr.get('blind_ante');
+  need(blindAnte === undefined || blindAnte === rr.get('ante'),
+    `round_resets.blind_ante(${blindAnte}) 应与 ante(${rr.get('ante')}) 一致`);
+
+  // 赌注（v0.3）：等级与效果字段必须自洽
+  const stake = g.get('stake');
+  need(stake === Math.trunc(stake as number) && (stake as number) >= 1 && (stake as number) <= 8,
+    `GAME.stake 应为 1-8 整数（当前 ${stake}）`);
+  const backC = ((root.get('BACK') as LuaTable).get('effect') as LuaTable).get('center') as LuaTable;
+  const sbk = g.get('selected_back_key') as LuaTable;
+  need(backC.get('stake') === stake && sbk.get('stake') === stake,
+    'BACK.effect.center.stake 与 GAME.selected_back_key.stake 应与 GAME.stake 一致');
+  if ((stake as number) >= 5) {
+    const d1 = (g.get('starting_params') as LuaTable).get('discards');
+    const d2 = rr.get('discards');
+    const d3 = (g.get('current_round') as LuaTable).get('discards_left');
+    need(d1 === d2 && d2 === d3, `蓝注及以上弃牌数应三处同步（${d1}/${d2}/${d3}）`);
+  }
+
+  const areas = root.get('cardAreas') as LuaTable;
+  need(areas instanceof LuaTable, '缺少 cardAreas 表');
+  for (const name of ['jokers', 'consumeables', 'deck', 'play', 'hand', 'discard']) {
+    need(areas.get(name) instanceof LuaTable, `缺少牌区 ${name}`);
+  }
+  const deck = areas.get('deck') as LuaTable;
+  const cards = deck.get('cards') as LuaTable;
+  const deckCfg = deck.get('config') as LuaTable;
+  const n = cards.entries.size;
+  need(n > 0, '牌堆不能为空');
+  need(g.get('starting_deck_size') === n, `starting_deck_size(${g.get('starting_deck_size')}) 应等于牌堆张数(${n})`);
+  need(deckCfg.get('card_limit') === n && deckCfg.get('temp_limit') === n, 'deck 区 card_limit/temp_limit 应等于牌堆张数');
+
+  const back = root.get('BACK') as LuaTable;
+  need(back instanceof LuaTable && typeof back.get('name') === 'string' && back.get('name') !== '', 'BACK.name 不能为空（游戏按名称查牌组）');
+  need(sbk.get('key') === back.get('key'), 'GAME.selected_back_key（center 表）的 key 应与 BACK.key 一致');
+}
