@@ -8,6 +8,9 @@ import { deflateSave } from '../src/core/deflate';
 import { generateSave } from '../src/core/generate';
 import { validateSave } from '../src/core/validate';
 import { LuaTable } from '../src/core/luaTable';
+import { BACKS } from '../src/data/backs';
+import { deckInit } from '../src/ui/runParamsPanel';
+import { defaultDeckCards, type DeckCard } from '../src/core/deckGen';
 
 const original = readFileSync(new URL('../references/save/template.jkr', import.meta.url));
 
@@ -137,6 +140,76 @@ describe('generateSave 开局数值覆盖（v0.4）', () => {
     expect(() => validateSave(root)).not.toThrow();
   });
 
+  it('手牌上限：starting_params 与手牌区容量同步（抓牌数取手牌区 card_limit）', () => {
+    const lua = inflateRawSync(generateSave('b_red', 1, { hands: 4, discards: 3, handSize: 12, dollars: 4 })).toString('utf8');
+    const root = parseLua(lua);
+    const sp = ((root.get('GAME') as LuaTable).get('starting_params') as LuaTable);
+    const handCfg = ((root.get('cardAreas') as LuaTable).get('hand') as LuaTable).get('config') as LuaTable;
+    expect(sp.get('hand_size')).toBe(12);
+    expect(handCfg.get('card_limit')).toBe(12);
+    expect(handCfg.get('temp_limit')).toBe(12);
+    expect(() => validateSave(root)).not.toThrow();
+  });
+
+  it('手牌上限越界被拒绝；不传时保持模板值 8', () => {
+    expect(() => generateSave('b_red', 1, { hands: 4, discards: 3, handSize: 0, dollars: 4 })).toThrow(/手牌上限/);
+    expect(() => generateSave('b_red', 1, { hands: 4, discards: 3, handSize: 3.5, dollars: 4 })).toThrow(/手牌上限/);
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, { hands: 4, discards: 3, dollars: 4 })).toString('utf8'));
+    expect(((root.get('GAME') as LuaTable).get('starting_params') as LuaTable).get('hand_size')).toBe(8);
+  });
+
+  it('牌组默认手牌上限：彩绘牌组 +2，其余牌组 8', () => {
+    const painted = BACKS.find(b => b.key === 'b_painted')!;
+    expect(deckInit(painted, 1).handSize).toBe(10);
+    for (const key of ['b_red', 'b_abandoned', 'b_erratic', 'b_plasma']) {
+      expect(deckInit(BACKS.find(b => b.key === key)!, 1).handSize).toBe(8);
+    }
+  });
+
+  it('小丑/消耗品槽位：starting_params 与对应牌区容量同步（读档时不再从 starting_params 派生）', () => {
+    const lua = inflateRawSync(generateSave('b_red', 1,
+      { hands: 4, discards: 3, jokerSlots: 7, consumableSlots: 3, dollars: 4 })).toString('utf8');
+    const root = parseLua(lua);
+    const sp = ((root.get('GAME') as LuaTable).get('starting_params') as LuaTable);
+    const areas = root.get('cardAreas') as LuaTable;
+    const jokerCfg = (areas.get('jokers') as LuaTable).get('config') as LuaTable;
+    const consCfg = (areas.get('consumeables') as LuaTable).get('config') as LuaTable;
+    expect(sp.get('joker_slots')).toBe(7);
+    expect(jokerCfg.get('card_limit')).toBe(7);
+    expect(jokerCfg.get('temp_limit')).toBe(7);
+    expect(sp.get('consumable_slots')).toBe(3);
+    expect(consCfg.get('card_limit')).toBe(3);
+    expect(consCfg.get('temp_limit')).toBe(3);
+    expect(() => validateSave(root)).not.toThrow();
+  });
+
+  it('槽位越界被拒绝；不传时保持模板值（小丑 5 / 消耗品 2）', () => {
+    expect(() => generateSave('b_red', 1, { hands: 4, discards: 3, jokerSlots: 0, dollars: 4 })).toThrow(/小丑槽位/);
+    expect(() => generateSave('b_red', 1, { hands: 4, discards: 3, consumableSlots: -1, dollars: 4 })).toThrow(/消耗品槽位/);
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, { hands: 4, discards: 3, dollars: 4 })).toString('utf8'));
+    const sp = ((root.get('GAME') as LuaTable).get('starting_params') as LuaTable);
+    expect(sp.get('joker_slots')).toBe(5);
+    expect(sp.get('consumable_slots')).toBe(2);
+  });
+
+  it('牌组默认槽位：黑 +1 小丑、彩绘 -1 小丑、星云 -1 消耗品，且实际写入存档', () => {
+    const of = (key: string): typeof BACKS[number] => BACKS.find(b => b.key === key)!;
+    expect(deckInit(of('b_black'), 1).jokerSlots).toBe(6);
+    expect(deckInit(of('b_painted'), 1).jokerSlots).toBe(4);
+    expect(deckInit(of('b_nebula'), 1).consumableSlots).toBe(1);
+    expect(deckInit(of('b_red'), 1).jokerSlots).toBe(5);
+    expect(deckInit(of('b_red'), 1).consumableSlots).toBe(2);
+
+    expect(deckInit(of('b_black'), 1).hands).toBe(3);          // 黑牌组出牌 -1 仍生效
+    const init = { ...deckInit(of('b_black'), 1), seed: 'ABCD1234' };
+    const root = parseLua(inflateRawSync(generateSave('b_black', 1, init)).toString('utf8'));
+    const sp = ((root.get('GAME') as LuaTable).get('starting_params') as LuaTable);
+    const jokerCfg = ((root.get('cardAreas') as LuaTable).get('jokers') as LuaTable).get('config') as LuaTable;
+    expect(sp.get('joker_slots')).toBe(6);
+    expect(jokerCfg.get('card_limit')).toBe(6);
+    expect(() => validateSave(root)).not.toThrow();
+  });
+
   it('覆盖值在赌注效果之后写入（蓝注 -1 弃牌被面板终值取代）', () => {
     const lua = inflateRawSync(generateSave('b_red', 5, { hands: 4, discards: 5, dollars: 4 })).toString('utf8');
     const root = parseLua(lua);
@@ -170,6 +243,74 @@ describe('generateSave 开局数值覆盖（v0.4）', () => {
     expect(() => generateSave('b_red', 1, { hands: 4, discards: 4, dollars: 4, seed: 'ABC01234' })).toThrow(/种子/);  // 含 0
     expect(() => generateSave('b_red', 1, { hands: 4, discards: 4, dollars: 4, seed: 'AICD1234' })).toThrow(/种子/);  // 含 I
     expect(() => generateSave('b_red', 1, { hands: 4, discards: 4, dollars: 4, seed: 'ABCD123' })).toThrow(/种子/);   // 7 位
+  });
+});
+
+describe('卡牌版本（v1.2 edition + shader）', () => {
+  const redDeck = (): DeckCard[] => defaultDeckCards(BACKS.find(b => b.key === 'b_red')!, 'RED12345');
+  const INIT = { hands: 4, discards: 4, dollars: 4 };
+  const deckOf = (root: LuaTable): LuaTable =>
+    ((root.get('cardAreas') as LuaTable).get('deck') as LuaTable).get('cards') as LuaTable;
+  const editionOf = (root: LuaTable, i: number): LuaTable | undefined => {
+    const ed = (deckOf(root).get(i) as LuaTable).get('edition');
+    return ed === undefined ? undefined : ed as LuaTable;
+  };
+
+  it('三种可用版本按 set_edition 规则写入（互斥单值 + 数值取中心 config.extra）', () => {
+    const cards = redDeck();
+    cards[0].edition = 'foil';
+    cards[1].edition = 'holo';
+    cards[2].edition = 'polychrome';
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, INIT, cards)).toString('utf8'));
+
+    expect(editionOf(root, 1)!.get('foil')).toBe(true);
+    expect(editionOf(root, 1)!.get('type')).toBe('foil');
+    expect(editionOf(root, 1)!.get('chips')).toBe(50);          // e_foil.config.extra
+    expect(editionOf(root, 2)!.get('holo')).toBe(true);
+    expect(editionOf(root, 2)!.get('mult')).toBe(10);           // e_holo.config.extra
+    expect(editionOf(root, 3)!.get('polychrome')).toBe(true);
+    expect(editionOf(root, 3)!.get('x_mult')).toBe(1.5);        // e_polychrome.config.extra
+
+    // 开局牌堆里的版本牌不动槽位（set_edition 的 +1 只在局内获得时发生）
+    const jokerCfg = ((root.get('cardAreas') as LuaTable).get('jokers') as LuaTable).get('config') as LuaTable;
+    expect(jokerCfg.get('card_limit')).toBe(5);
+    expect(() => validateSave(root)).not.toThrow();
+  });
+
+  it('负片被拒绝：扑克牌无法获得负片（Aura/标准包均传 no_neg，效果也是「不占槽位」）', () => {
+    const cards = redDeck();
+    cards[0].edition = 'negative';
+    expect(() => generateSave('b_red', 1, INIT, cards)).toThrow(/负片/);
+
+    // 绕过写入层手工塞入负片 → validate 必须拦住
+    const ok = redDeck();
+    ok[0].edition = 'foil';
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, INIT, ok)).toString('utf8'));
+    const ed = editionOf(root, 1)!;
+    ed.set('type', 'negative');
+    ed.set('negative', true);
+    ed.entries.delete('foil');
+    expect(() => validateSave(root)).toThrow(/负片/);
+  });
+
+  it('未设版本的牌不写 edition 字段；未知版本被拒绝', () => {
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, INIT, redDeck())).toString('utf8'));
+    expect(editionOf(root, 1)).toBeUndefined();
+    const bad = redDeck();
+    bad[0].edition = 'chrome';
+    expect(() => generateSave('b_red', 1, INIT, bad)).toThrow(/未知版本/);
+  });
+
+  it('validate 拒绝自相矛盾的 edition（type 与标记不一致 / 数值与中心不符）', () => {
+    const cards = redDeck();
+    cards[0].edition = 'foil';
+    const root = parseLua(inflateRawSync(generateSave('b_red', 1, INIT, cards)).toString('utf8'));
+    editionOf(root, 1)!.set('type', 'holo');
+    expect(() => validateSave(root)).toThrow(/edition\.type/);
+
+    const root2 = parseLua(inflateRawSync(generateSave('b_red', 1, INIT, cards)).toString('utf8'));
+    editionOf(root2, 1)!.set('chips', 12);
+    expect(() => validateSave(root2)).toThrow(/config\.extra/);
   });
 });
 

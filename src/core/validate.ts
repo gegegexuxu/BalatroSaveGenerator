@@ -1,5 +1,7 @@
 // 生成前结构断言（PROJECT_SPEC.md 5.8）：断言失败直接抛错，不产出文件
 import { LuaTable } from './luaTable';
+import { EDITIONS } from '../data/cardMods';
+import { EDITION_VALUE_FIELD } from './saveDeck';
 
 function need(cond: unknown, msg: string): void {
   if (!cond) throw new Error(`存档校验失败: ${msg}`);
@@ -46,6 +48,34 @@ export function validateSave(root: LuaTable): void {
   need(n > 0, '牌堆不能为空');
   need(g.get('starting_deck_size') === n, `starting_deck_size(${g.get('starting_deck_size')}) 应等于牌堆张数(${n})`);
   need(deckCfg.get('card_limit') === n && deckCfg.get('temp_limit') === n, 'deck 区 card_limit/temp_limit 应等于牌堆张数');
+
+  // 版本（v1.2）：互斥单值 —— 恰好一个标记为 true、type 与之一致、数值项取自中心 config.extra
+  for (const [, node] of cards.entries) {
+    const ed = (node as LuaTable).get('edition');
+    if (ed === undefined) continue;
+    need(ed instanceof LuaTable, 'edition 应为表');
+    const et = ed as LuaTable;
+    const marked = EDITIONS.map(e => e.key).filter(k => et.get(k) === true);
+    need(marked.length === 1, `edition 应恰好标记一个版本（当前 ${marked.length} 个）`);
+    need(marked[0] !== 'negative', '扑克牌不应有负片版本（负片仅作用于小丑与消耗品，游戏内扑克牌无法获得）');
+    need(et.get('type') === marked[0], `edition.type(${et.get('type')}) 应与标记(${marked[0]}) 一致`);
+    const def = EDITIONS.find(e => e.key === marked[0])!;
+    const field = EDITION_VALUE_FIELD[marked[0]];
+    if (field) {
+      need(et.get(field) === def.config.extra,
+        `${marked[0]} 的 ${field}(${et.get(field)}) 应等于中心 config.extra(${def.config.extra})`);
+    }
+  }
+
+  // 槽位数（v1.1）：starting_params 与对应牌区容量必须同步（读档时游戏不再从 starting_params 派生）
+  const sp = g.get('starting_params') as LuaTable;
+  const slotPairs: [string, string][] = [['jokers', 'joker_slots'], ['consumeables', 'consumable_slots']];
+  for (const [area, field] of slotPairs) {
+    const cfg = (areas.get(area) as LuaTable).get('config') as LuaTable;
+    const want = sp.get(field);
+    need(cfg.get('card_limit') === want && cfg.get('temp_limit') === want,
+      `${area} 区 card_limit/temp_limit(${cfg.get('card_limit')}/${cfg.get('temp_limit')}) 应与 starting_params.${field}(${want}) 一致`);
+  }
 
   const back = root.get('BACK') as LuaTable;
   need(back instanceof LuaTable && typeof back.get('name') === 'string' && back.get('name') !== '', 'BACK.name 不能为空（游戏按名称查牌组）');

@@ -1,11 +1,12 @@
-// 存档组装入口（v0.4：替换牌组 BACK + 选择赌注 stake 1-8 + 开局数值覆盖（出牌/弃牌/金币）；
-// 牌组其余规则字段（手牌上限/小丑槽位等）仍未应用）
+// 存档组装入口（v0.5：在 v0.4 的牌组/赌注/开局数值之上，写入按牌组类型生成的目标牌堆）
 // 字段映射与键序依据 PROJECT_SPEC.md 5.4 / 附录 B（模板 BACK 的键序：name, pos, effect, key）
 import { BACKS, type BackDef } from '../data/backs';
 import templateSource from '../data/templateSource';
 import { LuaTable, parseLua, serializeLua, type LuaValue } from './luaTable';
 import { deflateSave } from './deflate';
 import { validateSave } from './validate';
+import { applyDeckToSave } from './saveDeck';
+import type { DeckCard } from './deckGen';
 
 export const MIN_STAKE = 1;
 export const MAX_STAKE = 8;
@@ -182,8 +183,15 @@ function applySeed(root: LuaTable, seed: string): void {
   }
 }
 
-/** 生成指定牌组与赌注（1-8，白注~金注）的开局 save.jkr 字节流 */
-export function generateSave(deckKey: string, stake: number = 1, init?: RunInitOverrides): Uint8Array {
+/** 生成指定牌组与赌注（1-8，白注~金注）的开局 save.jkr 字节流。
+ *  cards 为目标牌堆（牌堆顺序，见 core/deckGen）：传入时替换存档牌堆，
+ *  省略则沿用模板牌堆（模板虽是合法红牌组，但牌序来自别的种子） */
+export function generateSave(
+  deckKey: string,
+  stake: number = 1,
+  init?: RunInitOverrides,
+  cards?: DeckCard[],
+): Uint8Array {
   const def = BACKS.find(b => b.key === deckKey && !b.omit);
   if (!def) throw new Error(`未知或不可选的牌组: ${deckKey}`);
   if (!Number.isInteger(stake) || stake < MIN_STAKE || stake > MAX_STAKE) {
@@ -202,6 +210,7 @@ export function generateSave(deckKey: string, stake: number = 1, init?: RunInitO
     applyRunInit(root, init);
     if (init.seed !== undefined) applySeed(root, init.seed);
   }
+  if (cards) applyDeckToSave(root, cards);
 
   validateSave(root);
   return deflateSave(serializeLua(root));

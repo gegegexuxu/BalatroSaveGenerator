@@ -569,73 +569,291 @@ body {
   gap: 12px;
   height: 40px;             /* 操作行统一高度 */
 }
-.deck-editor-banner {
+.deck-editor-reset {
   flex: none;
-  width: 144px;             /* 保持原横幅尺寸 */
+  width: 144px;             /* 与原横幅同尺寸 */
   height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
   background: var(--c-red);
   color: var(--c-white);
+  font-family: inherit;
   font-size: 22px;
   font-weight: 700;
-  border-radius: 6px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
   box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
 }
+.deck-editor-reset:hover { filter: brightness(1.08); }
+.deck-editor-reset:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+.deck-editor-create {
+  flex: 1;                  /* 与「确定」等宽（红色「重置」保持 144px 不变）*/
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--c-blue);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.deck-editor-create:hover { filter: brightness(1.08); }
+.deck-editor-create:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
 .deck-editor-body { display: flex; gap: 14px; min-height: 0; }
 .deck-editor-side {
-  width: 200px;
+  width: 223px;
   flex: none;
   background: var(--c-black);
   border: 2px solid var(--c-grey);
   border-radius: 8px;
   padding: 10px;
   display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: stretch;
+}
+.deck-editor-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.deck-editor-deck-name { font-size: 24px; font-weight: 700; text-align: center; }
+.deck-editor-deck-name { font-size: 21px; font-weight: 700; text-align: center; }
 .editor-desc {
   background: var(--c-white);
   color: var(--ui-text-dark);
   border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 15px;
-  line-height: 1.4;
+  padding: 7px 8px;
+  font-size: 14px;
+  line-height: 1.35;
   text-align: center;
 }
-.editor-desc p { min-height: 1.4em; }
-.deck-editor-base {
+.editor-desc p { min-height: 1.35em; }
+.deck-base-panel {
+  flex: 1 1 auto;
+  min-height: 0;
   border: 2px solid var(--c-grey);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 8px 6px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .deck-editor-base-title { color: var(--c-orange); font-weight: 700; text-align: center; font-size: 16px; }
-.deck-base-grid { display: flex; justify-content: center; gap: 8px; }
-.deck-base-chip { display: flex; flex-direction: column; align-items: center; min-width: 36px; }
-.deck-base-chip .sym {
-  font-weight: 700;
-  font-size: 17px;
-  background: var(--c-grey);
-  border-radius: 4px;
-  padding: 0 7px;
-  color: var(--c-white);
+.deck-base-rows {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: 2px;
 }
-.deck-base-chip .val { font-size: 14px; color: var(--c-white); }
+.deck-base-row { display: flex; justify-content: space-evenly; gap: 6px; }
+.deck-base-chip { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 38px; }
+/* 游戏 ui_asset 小图标：浅色底托住深色像素图（游戏里这些图标画在浅色面板上） */
+.deck-base-chip .sym-icon {
+  width: 26px;
+  height: 26px;
+  padding: 2px;
+  background: var(--c-joker-grey);
+  border-radius: 5px;
+  image-rendering: pixelated;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .18);
+}
+.deck-base-chip .val { font-size: 14px; color: var(--c-white); font-weight: 700; }
 .deck-editor-ranks {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px 4px;
-  justify-items: center;
+  flex: none;
+  width: 50px;               /* 24 点数块 + 6 间距 + 数字位 */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 3px;
 }
-.deck-rank-cell { display: flex; flex-direction: column; align-items: center; }
+.deck-rank-cell { display: flex; align-items: center; gap: 6px; }
+.deck-editor-hint {
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.35;
+  color: #9aa5a6;
+}
+
+/* ---------- 扑克详情弹窗（叠加在牌组编辑弹窗之上；样式沿用游戏面板/按钮惯例） ---------- */
+.cd-overlay { z-index: 60; }
+.card-detail {
+  width: min(780px, 100%);
+  color: var(--c-white);
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 10px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+  overflow: hidden;          /* 裁掉标题栏直角 */
+  display: flex;
+  flex-direction: column;
+}
+.cd-title {
+  background: var(--c-black);
+  padding: 12px 20px;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, .45);
+  border-bottom: 2px solid var(--c-grey);
+}
+.cd-body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cd-grid {
+  display: grid;
+  /* 组名 / 左箭头 / 牌面 / 右箭头 / 当前值 —— 左右两列等宽，保证中间牌面水平居中 */
+  grid-template-columns: minmax(0, 160px) 46px auto 46px minmax(0, 160px);
+  align-items: center;
+  gap: 12px 18px;
+}
+.cd-group {
+  color: var(--c-joker-grey);
+  font-size: 20px;
+  justify-self: end;
+}
+/* 牌面凹槽：深色底板托住牌面（呼应游戏里牌堆放在深色牌区上） */
+.cd-card-cell {
+  grid-column: 3;
+  grid-row: 1 / span 5;
+  display: flex;
+  align-items: center;       /* 在跨行区域内垂直居中 */
+  justify-content: center;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: inset 0 3px 0 rgba(0, 0, 0, .28);
+}
+.cd-card-cell .pcard {
+  --card-w: 216px;
+  --card-h: 312px;
+  cursor: default;
+}
+.cd-card-cell .pcard:hover { outline: none; z-index: auto; }
+/* 切换箭头：沿用 .arrow-btn 的游戏按钮质感（硬阴影 + 内浮雕） */
+.cd-arrow {
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--c-lblack);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 20px;
+  border: 2px solid var(--c-grey);
+  border-radius: 8px;
+  cursor: pointer;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, .45);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08),
+              inset 0 -2px 0 rgba(0, 0, 0, .25);
+  transition: background-color .12s, transform .08s, box-shadow .08s;
+}
+.cd-arrow:hover { box-shadow: inset 0 0 0 999px var(--ui-hover), 0 4px 0 rgba(0, 0, 0, .35); }
+.cd-arrow:active { transform: translateY(2px); box-shadow: inset 0 0 0 999px var(--ui-hover), 0 2px 0 rgba(0, 0, 0, .35); }
+.cd-arrow[disabled] {
+  background: var(--ui-bg-inactive);
+  color: #d5d5d5;
+  cursor: default;
+  text-shadow: none;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .22);
+}
+/* 当前值：深色数值槽（呼应牌组视图的点数计数块） */
+.cd-value {
+  width: 100%;
+  text-align: center;
+  padding: 7px 10px;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--c-white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset 0 2px 0 rgba(0, 0, 0, .28);
+}
+/* 物品值色块：增强 / 蜡封 / 版本按游戏配色填充（底色 = 物品色、文字纯白，
+   对应游戏 create_badge；配色由 scripts/extractData.mjs 从 G.BADGE_COL / SECONDARY_SET 提取） */
+.cd-value-item {
+  background: var(--pill);
+  border-color: rgba(0, 0, 0, .35);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .14),
+              inset 0 -2px 0 rgba(0, 0, 0, .22);
+}
+/* 版本色块的呼吸：游戏主循环每帧改写 G.C.DARK_EDITION（game.lua:2500-2502）——
+   R = base+amp·sin(w·t)、B = base+amp·(1−sin)、G = min(R,B)，周期 2π/w ≈ 4.833s。
+   三段关键帧对应 sin = +1 / 0 / −1（即游戏里的暖灰 → 中位 → 蓝），中段同时作为静止回退色。
+   颜色与周期由 scripts/extractData.mjs 从 game.lua 的公式算出，写入 EDITION_PULSE。 */
+.cd-value-item--pulse {
+  animation: edition-pulse var(--pill-period, 4.833s) ease-in-out infinite;
+}
+@keyframes edition-pulse {
+  0%, 100% { background: var(--pill-warm); }
+  25%, 75% { background: var(--pill-mid); }
+  50% { background: var(--pill-cool); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-value-item--pulse { animation: none; }   /* 停在 --pill（中位色） */
+}
+/* 带游戏图标的值单元格（花色）：图标 + 名称水平居中 */
+.cd-value-icon { display: flex; align-items: center; justify-content: center; gap: 8px; }
+/* 花色图标：直接坐在深色值槽上，不加浅色底托（红桃/方块亮色可读）。
+   注意黑桃 #3c4368、梅花 #235955 本身偏暗（亮度 68 / 77，底色 #374244 亮度 ~65），
+   对比很弱；若后续觉得看不清，可加极淡浅色描边或只给深色花色保留底。 */
+.cd-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  image-rendering: pixelated;
+}
+.cd-actions { display: flex; gap: 16px; justify-content: center; }
+.cd-btn {
+  min-width: 168px;
+  height: 48px;
+  border: none;
+  border-radius: 6px;
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  text-shadow: 2px 2px 0 #374244;
+  cursor: pointer;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .35);
+  transition: transform .08s, box-shadow .08s;
+}
+.cd-btn:hover { box-shadow: inset 0 0 0 999px var(--ui-hover), 0 4px 0 rgba(0, 0, 0, .35); }
+.cd-btn:active { transform: translateY(2px); box-shadow: inset 0 0 0 999px var(--ui-hover), 0 2px 0 rgba(0, 0, 0, .35); }
+.cd-confirm { background: var(--c-red); }     /* 仅编辑模式出现 */
+.cd-cancel { background: var(--c-blue); }
+.cd-create { background: var(--c-orange); }
 .deck-rank-chip {
-  width: 27px;
-  height: 27px;
+  width: 24px;
+  height: 24px;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -643,10 +861,10 @@ body {
   border: 1px solid var(--c-grey);
   border-radius: 6px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--c-white);
 }
-.deck-rank-n { font-size: 13px; color: var(--c-white); }
+.deck-rank-n { font-size: 13px; font-weight: 700; color: var(--c-white); white-space: nowrap; }
 .deck-editor-cards {
   flex: 1;
   min-width: 0;
@@ -658,6 +876,7 @@ body {
   flex-direction: column;
   justify-content: space-evenly;
   gap: 8px;
+  overflow-x: auto;         /* 兜底：窗口很窄时同花色牌挤到最小步进仍放不下，改为横向滚动而不出框 */
 }
 .deck-suit-row {
   display: flex;
@@ -667,17 +886,42 @@ body {
 .pcard {
   position: relative;
   flex: none;
-  width: 72px;
-  height: 104px;
-  background: var(--c-white);
-  border: 1px solid #c9c9c9;
-  border-radius: 6px;
+  width: var(--card-w, 72px);
+  height: var(--card-h, 104px);
+  /* 牌面观感全部来自底板图（空白牌 Normal.png / 各增强底板），不再自绘白底与描边 */
   box-shadow: 2px 2px 0 rgba(0, 0, 0, .18);
-  margin-left: -26px;             /* 相邻牌少量重叠，space-between 下均匀铺满整行 */
+  cursor: pointer;
+  user-select: none;
+  /* 行内步进由 deckEditorModal.ts:applyRowFit 按行宽写入 */
+  margin-left: calc(var(--step, 46px) - 72px);
 }
 .pcard:first-child { margin-left: 0; }
+/* 版本 shader 层（闪箔/镭射/多彩/负片）：盖在底板与牌面之上、蜡封之下，由 ui/cardShader.ts 绘制 */
+.pcard-shader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+/* 悬浮时抬高，否则外框会被右侧叠压的牌盖住 */
+.pcard:hover {
+  z-index: 1;
+  outline: 2px solid var(--c-orange);
+  outline-offset: 1px;
+}
 .pcard-face { position: absolute; inset: 0; width: 100%; height: 100%; }
-.pcard-base { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; }
+.pcard-base { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* 蜡封：资源与牌面同尺寸（142×190）且留了透明边，整张铺在牌面上即自动对齐 */
+.pcard-seal {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 .pcard-fallback {
   position: absolute;
   inset: 0;
@@ -712,14 +956,25 @@ body {
 @media (max-width: 920px) {
   .switchers { flex-direction: column; gap: 20px; }
 }
+@media (max-width: 880px) {
+  /* 扑克详情弹窗：窄屏缩小牌面与两侧列，按钮等分铺满 */
+  .cd-grid { grid-template-columns: minmax(0, 118px) 42px auto 42px minmax(0, 118px); gap: 10px 12px; }
+  .cd-card-cell .pcard { --card-w: 160px; --card-h: 231px; }
+  .cd-card-cell { padding: 8px; }
+  .cd-group { font-size: 17px; }
+  .cd-value { font-size: 17px; padding: 6px 8px; }
+  .cd-arrow { width: 42px; height: 42px; font-size: 17px; }
+  .cd-body { padding: 14px 16px; gap: 12px; }
+  .cd-btn { min-width: 0; flex: 1 1 0; font-size: 20px; }
+}
+
 @media (max-width: 720px) {
-  .stage-inner { flex-direction: column; align-items: center; padding: 16px; }
   .info-panel { max-width: none; width: 100%; }
   .info-desc { flex: none; height: auto; }   /* 窄屏纵向排列时面板不被拉伸，描述按内容自适应 */
   .selector-row { gap: 10px; }
   .arrow-btn { width: 44px; height: 66px; font-size: 20px; }
   .deck-img { width: 120px; }
   .switchers-col { width: 100%; min-width: 0; }
-  .deck-editor-ranks { display: none; }   /* 窄屏隐藏点数列，牌面区可横向滚动 */
+  .deck-editor-ranks { display: none; }
   .deck-editor-cards { overflow-x: auto; }
 }

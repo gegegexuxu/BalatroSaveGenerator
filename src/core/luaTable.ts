@@ -16,6 +16,11 @@ export class LuaTable {
     return this;
   }
 
+  /** 深拷贝（键序保持），得到可安全改写的独立表 */
+  clone(): LuaTable {
+    return cloneLuaTable(this);
+  }
+
   /** 供断言/调试：以普通对象视图读取（仅只读场景） */
   toPlain(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
@@ -27,6 +32,15 @@ export class LuaTable {
 }
 
 // ---------- 解析 ----------
+
+/** 深拷贝 Lua 表（键序保持；叶子值为数字/字符串/布尔，天然不可变） */
+export function cloneLuaTable(t: LuaTable): LuaTable {
+  const out = new LuaTable();
+  for (const [k, v] of t.entries) {
+    out.set(k, v instanceof LuaTable ? cloneLuaTable(v) : v);
+  }
+  return out;
+}
 
 class Cursor {
   pos = 0;

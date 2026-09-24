@@ -78,8 +78,9 @@ for (const line of gameLua.split('\n')) {
 
 // ---- 2. zh_CN 的名称与描述 ----
 const zhNames = {};
-function zhName(key) {
-  const block = extractBlock(zhLua, key);
+/** 取 zh_CN 中 key 块的 name 字段；src 可指定为某个已截取的子块（避免同名键互相干扰） */
+function zhName(key, src = zhLua) {
+  const block = extractBlock(src, key);
   if (!block) return undefined;
   const m = /name\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(block);
   return m ? m[1] : undefined;
@@ -151,3 +152,124 @@ const stakeBody = `export interface StakeDef {\n  level: number;\n  key: string;
 writeFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/data/stakes.ts'), stakeHeader + stakeBody);
 console.log(`extracted ${stakes.length} stakes:`);
 for (const s of stakes) console.log(`  #${s.level} ${s.zhName} (${s.key})`);
+
+// ---- 6. 提取增强（P_CENTERS m_*）与蜡封（P_SEALS）→ src/data/cardMods.ts ----
+// 增强：卡面底图文件名 = center.label（如 "Glass Card"），存档写 save_fields.center = key、ability 由 config 重算
+const enhancedZh = extractBlock(zhLua, 'Enhanced') ?? '';
+const enhancements = gameLua.split('\n')
+  .map(line => /^\s{8}(m_\w+)\s*=\s*\{.+\},?\s*$/.exec(line))
+  .filter(Boolean)
+  .map(m => [m[1], parseLuaLiteral(m[0].slice(m[0].indexOf('{')))])
+  .map(([key, def]) => ({
+    key,
+    enName: def.name,
+    zhName: zhName(key, enhancedZh) ?? def.name,
+    /** 卡面底图文件名（assets/enhancement/<image>，= 游戏资源名 Resources/enhancement/<name>.png） */
+    image: `${def.name}.png`,
+    /** 存档 card.label（= center.label，如 m_bonus 是 "Bonus Card"） */
+    label: def.label ?? def.name,
+    order: def.order,
+    config: def.config ?? {},
+  })).sort((a, b) => a.order - b.order);
+
+// 蜡封：存档写字符串 key（Red/Blue/Gold/Purple）；蜡封图 Resources/seal/<key>.png
+const sealsBlock = extractBlock(gameLua, 'self.P_SEALS') ?? '';
+const otherZh = extractBlock(zhLua, 'Other') ?? '';
+const seals = [...sealsBlock.matchAll(/(\w+)\s*=\s*\{\s*order\s*=\s*(\d+)/g)]
+  .map(([, key, order]) => ({
+    key,
+    zhName: zhName(`${key.toLowerCase()}_seal`, otherZh) ?? key,
+    image: `${key}.png`,
+    order: Number(order),
+  })).sort((a, b) => a.order - b.order);
+
+// ---- 6b. 提取版本（P_CENTERS e_*）→ EDITIONS（与增强/蜡封同文件）
+// key 去掉 e_ 前缀 = shader 名（resources/shaders/<key>.fs）= 存档 card.edition 字段名
+// e_base（无效果）不收录；config.extra 是效果数值（闪箔 +50 筹码 / 镭射 +10 倍率 / 多彩 X1.5 / 负片 +1 槽）
+const editions = gameLua.split('\n')
+  .map(line => /^\s{8}(e_\w+)\s*=\s*\{.+\},?\s*$/.exec(line))
+  .filter(Boolean)
+  .map(m => [m[1], parseLuaLiteral(m[0].slice(m[0].indexOf('{')))])
+  .filter(([key]) => key !== 'e_base')
+  .map(([key, def]) => ({
+    key: key.slice(2),
+    enName: def.name,
+    zhName: zhName(key) ?? def.name,
+    order: def.order,
+    config: def.config ?? {},
+  })).sort((a, b) => a.order - b.order);
+
+// ---- 6c. 提取配色：globals.lua 的 G.C 色值 + UI_definitions.lua 的 G.BADGE_COL ----
+// 用途：扑克详情里「增强 / 蜡封 / 版本」的值按游戏配色上色。
+// 依据游戏的 create_badge（UI_definitions.lua:1153）：底色 = 物品色、文字纯白。
+//   蜡封 → G.BADGE_COL 的 *_seal（金 GOLD / 红 RED / 蓝 BLUE / 紫 PURPLE）
+//   版本 → 四种在游戏里统一是 G.C.DARK_EDITION（黑）
+//   增强 → G.C.SECONDARY_SET.Enhanced（分类色，所有增强共用）
+const globalsLua = readFileSync(resolve(ROOT, 'Code/globals.lua'), 'utf8');
+const uiDefsLua = readFileSync(resolve(ROOT, 'Code/functions/UI_definitions.lua'), 'utf8');
+
+/** 取 needle 之后第一个 '{' 起的完整平衡块 */
+const blockAfter = (src, needle) => {
+  const i = src.indexOf(needle);
+  return i < 0 ? '' : balancedFrom(src, src.indexOf('{', i));
+};
+
+const colourOf = {};
+// HEX("009dff") / HEX('FE5F55')；8 位含 alpha（如 8389DDFF）取前 6 位
+for (const m of globalsLua.matchAll(/([A-Z][A-Z_0-9]*)\s*=\s*HEX\(\s*["']([0-9a-fA-F]{6,8})["']\s*\)/g)) {
+  colourOf[m[1]] = `#${m[2].slice(0, 6).toLowerCase()}`;
+}
+// 四元色（如 DARK_EDITION = {0,0,0,1}）→ #rrggbb
+for (const m of globalsLua.matchAll(/([A-Z][A-Z_0-9]*)\s*=\s*\{\s*([01](?:\.\d+)?)\s*,\s*([01](?:\.\d+)?)\s*,\s*([01](?:\.\d+)?)\s*,\s*([01](?:\.\d+)?)\s*\}/g)) {
+  const h = (v) => Math.round(Number(v) * 255).toString(16).padStart(2, '0');
+  colourOf[m[1]] = `#${h(m[2])}${h(m[3])}${h(m[4])}`;
+}
+
+const badgeColour = {};
+for (const m of blockAfter(uiDefsLua, 'G.BADGE_COL').matchAll(/(\w+)\s*=\s*G\.C\.(\w+)/g)) {
+  if (colourOf[m[2]]) badgeColour[m[1]] = colourOf[m[2]];
+}
+const enhancedColour = /Enhanced\s*=\s*HEX\(\s*["']([0-9a-fA-F]{6,8})["']\s*\)/
+  .exec(blockAfter(globalsLua, 'SECONDARY_SET'))?.[1];
+const enhancedHex = enhancedColour ? `#${enhancedColour.slice(0, 6).toLowerCase()}` : undefined;
+
+// 挂到三类数据上（形状统一：def.colour）
+for (const s of seals) s.colour = badgeColour[`${s.key.toLowerCase()}_seal`];
+for (const e of editions) e.colour = badgeColour[e.key === 'holo' ? 'holographic' : e.key];
+for (const e of enhancements) e.colour = enhancedHex;
+
+// 版本徽章的底色在游戏里是**逐帧呼吸**的：主循环每帧改写 G.C.DARK_EDITION
+// （game.lua:2500-2502）——R = base+amp*sin(w*t)、B = base+amp*(1-sin(w*t))、G = min(R,B)。
+// 故徽章（UI_definitions.lua:1140-1143 四种版本都取 DARK_EDITION）底色在两色之间往返。
+const pulse = /C\.DARK_EDITION\[1\]\s*=\s*([\d.]+)\s*\+\s*([\d.]+)\s*\*\s*math\.sin\(\s*self\.TIMERS\.REAL\s*\*\s*([\d.]+)\s*\)/.exec(gameLua);
+let editionPulse;
+if (pulse) {
+  const base = Number(pulse[1]), amp = Number(pulse[2]), w = Number(pulse[3]);
+  const hex = (r, g, b) => `#${[r, g, b].map(v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+  // 直接按公式求值（避免手推相位出错）：R = base+amp*s，B = base+amp*(1-s)，G = min(R,B)
+  const at = (s) => {
+    const r = base + amp * s;
+    const b = base + amp * (1 - s);
+    return hex(r, Math.min(r, b), b);
+  };
+  const warm = at(1);      // sin=+1：R 最大、B 最小
+  const mid = at(0);       // sin=0：中位
+  const cool = at(-1);     // sin=-1：R 最小、B 最大
+  editionPulse = { warm, mid, cool, period: Number((2 * Math.PI / w).toFixed(3)) };
+  for (const e of editions) e.colour = mid;       // 静止/降低动态时的回退色取中位
+  console.log(`edition badge pulse ${editionPulse.period}s: ${warm} → ${mid} → ${cool}`);
+} else {
+  console.warn('未找到 G.C.DARK_EDITION 的呼吸公式（game.lua），版本徽章将使用静态色');
+}
+
+const pulseTs = editionPulse ?? { warm: badgeColour.foil ?? '#000000', mid: badgeColour.foil ?? '#000000', cool: badgeColour.foil ?? '#000000', period: 4.833 };
+
+const modsBody = `export interface EnhancementDef {\n  key: string;\n  enName: string;\n  zhName: string;\n  /** 卡面底图文件名：assets/enhancement/<image> */\n  image: string;\n  /** 存档 card.label（= center.label） */\n  label: string;\n  order: number;\n  config: Record<string, number>;\n  /** 标签底色（G.C.SECONDARY_SET.Enhanced，所有增强共用；游戏不改写此色，静态） */\n  colour: string;\n}\n\nexport interface SealDef {\n  key: string;\n  zhName: string;\n  /** assets/seal/<image> */\n  image: string;\n  order: number;\n  /** 标签底色（G.BADGE_COL.<key>_seal：金 GOLD / 红 RED / 蓝 BLUE / 紫 PURPLE；游戏不改写，静态） */\n  colour: string;\n}\n\nexport interface EditionDef {\n  /** foil / holo / polychrome / negative：= shader 名（resources/shaders/<key>.fs）= 存档 card.edition 字段名 */\n  key: string;\n  enName: string;\n  zhName: string;\n  order: number;\n  /** 中心 config，extra 为效果数值（由 core/saveDeck 按 set_edition 规则映射到 chips/mult/x_mult） */\n  config: Record<string, number>;\n  /** 标签底色的中位色（DARK_EDITION 呼吸的中点；降低动态/无法动画时使用） */\n  colour: string;\n}\n\n/** 版本徽章底色的呼吸：游戏主循环每帧改写 G.C.DARK_EDITION（game.lua:2500-2502），\n *  R = base+amp*sin(w*t)、B = base+amp*(1-sin)、G = min(R,B)，周期 2π/w。四种版本共用同一色（同呼吸）。 */\nexport const EDITION_PULSE: { warm: string; mid: string; cool: string; period: number } = ${JSON.stringify(pulseTs)};\n\nexport const ENHANCEMENTS: EnhancementDef[] = ${JSON.stringify(enhancements, null, 2)};\n\nexport const SEALS: SealDef[] = ${JSON.stringify(seals, null, 2)};\n\nexport const EDITIONS: EditionDef[] = ${JSON.stringify(editions, null, 2)};\n`;
+writeFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/data/cardMods.ts'),
+  `// AUTO-GENERATED by scripts/extractData.mjs — DO NOT EDIT\n// 来源: game.lua P_CENTERS(m_* / e_*) / P_SEALS + globals.lua G.C + UI_definitions.lua G.BADGE_COL + Code/localization/zh_CN.lua\n` + modsBody);
+console.log(`extracted ${enhancements.length} enhancements:`);
+for (const e of enhancements) console.log(`  ${e.key} #${e.order} ${e.zhName} (${e.enName}) colour=${e.colour}`);
+console.log(`extracted ${seals.length} seals:`);
+for (const s of seals) console.log(`  ${s.key} #${s.order} ${s.zhName} colour=${s.colour}`);
+console.log(`extracted ${editions.length} editions:`);
+for (const e of editions) console.log(`  ${e.key} #${e.order} ${e.zhName} (${e.enName}) extra=${e.config.extra} colour=${e.colour}`);

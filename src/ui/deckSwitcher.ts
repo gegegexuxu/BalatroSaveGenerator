@@ -5,6 +5,8 @@ import { h, renderDescLine } from './dom';
 export interface DeckSwitcher {
   root: HTMLElement;
   onChange: (def: BackDef) => void;
+  /** 更新卡面下方张数标签（随牌组类型变化，如废弃牌组 40 张） */
+  setCount(count: number): void;
   prev(): void;
   next(): void;
 }
@@ -74,6 +76,7 @@ export function createDeckSwitcher(
   return {
     root,
     onChange,
+    setCount: count => { editCount.textContent = `${count} / ${count}`; },
     prev: () => move(-1),
     next: () => move(1),
   };
