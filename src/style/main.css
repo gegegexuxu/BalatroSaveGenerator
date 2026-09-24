@@ -986,6 +986,239 @@ body::before {
 }
 .deck-editor-back:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
 
+/* ---------- 消耗牌入口（参数面板下方：已有牌面 + 修改按钮）----------
+   右侧参数列的自定义项，宽度与种子条 / 参数面板一致（258px），高度压到最紧凑
+   （计数与按钮同一行、牌面 52×70），以免在 720p 视口里多出一条纵向滚动条；
+   已选牌左键移除，未占满时用虚线空槽补齐，直接反映「还有几个空位」。 */
+.consumables-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 258px;
+  max-width: 100%;
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 8px 10px 10px;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+.ce-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ce-head { font-size: 16px; color: var(--c-white); }
+.ce-head.ce-over { color: var(--c-red); }   /* 槽位数被调小后已选数量可能超过容量，标红提示 */
+.ce-cards { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
+.ce-card, .ce-slot {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 70px;             /* 142:190 原比例 */
+}
+.ce-card { cursor: pointer; box-shadow: 2px 2px 0 rgba(0, 0, 0, .18); }
+.ce-card:hover { outline: 2px solid var(--c-orange); outline-offset: 1px; }
+.ce-slot {
+  background: var(--c-black);
+  border: 2px dashed var(--c-grey);   /* 虚线 = 可操作 / 待填充（同 .param-input 的下虚线） */
+  border-radius: 6px;
+  box-shadow: none;
+}
+.ce-slot.ce-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  font-size: 12px;
+  color: #9aa5a6;
+  text-align: center;
+}
+.ce-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.ce-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+}
+.ce-edit {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 17px;
+  background: var(--c-purple);   /* 取游戏调色板的紫（G.C.PURPLE），与消耗牌的紫系分类色呼应 */
+}
+
+/* ---------- 消耗牌（v1 仅界面配置，不入档）----------
+   弹窗 = 纯图鉴（点击即加），已有消耗牌与移除在主页入口（.consumables-entry）。
+   牌块另起 .ccard 而非复用 .pcard：扑克牌块带行内重叠步进（margin-left: --step），
+   而消耗牌是等距换行网格；两者观感（硬阴影、悬停橙描边）保持一致。 */
+.consumables-modal {
+  width: min(1140px, 96vw);
+  max-height: 92vh;
+  overflow: auto;           /* 兜底：窗口很矮时整体滚动，内层网格仍各自滚动 */
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+.cm-title {
+  font-size: 24px;
+  text-align: center;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, .4);
+}
+/* 牌池：固定两行 × 每行 8 张（不做滚动条，翻页按钮切换）。
+   行高与牌块宽度用同一套 calc，保证任何页都占满两行高度、翻页时弹窗不跳。 */
+.cm-view { display: flex; align-items: center; gap: 11px; }
+.cm-arrow { height: 100%; min-height: 84px; max-height: 160px; }
+.cm-nav-hidden { visibility: hidden; }   /* 只有一页时收起翻页控件，但保留占位不使牌池变宽 */
+.cm-pages { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+/* 行高用「整行宽高比」锁死（间距也取百分比，故行高只与行宽相关）：
+   8 列 × 142:190 + 7 个 1% 间距 ⇒ 行高 = 行宽 / 6.429，空行也保持同样高度，翻页时弹窗不跳。 */
+.cm-row {
+  display: flex;
+  gap: 1%;
+  aspect-ratio: 6.429 / 1;
+}
+.cm-dots { flex: none; }
+/* 说明浮框：仅悬停某张牌时出现，平时完全不占位；pointer-events: none 让它不抢悬停目标（否则会来回闪）。
+   不设高度上限也不用内部滚动条——说明文本最长 5 行，框体随内容自然撑开即可 */
+.cm-desc-pop {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  width: min(305px, 60%);
+  display: none;
+  padding: 9px;
+  pointer-events: none;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 10px;
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .07);
+}
+.cm-desc-pop.show { display: block; }
+.cm-tabs { display: flex; gap: 10px; flex: none; }
+.cm-tab {
+  flex: none;
+  height: 36px;
+  padding: 0 18px;
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  background: var(--c-black);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.cm-tab:hover { filter: brightness(1.15); }
+.cm-tab:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+/* 选中态：分类色底 + 白描边（描边是本站既有的「选中」语汇，见 .deck-frame:focus-visible） */
+.cm-tab.active { color: var(--c-white); border-color: rgba(0, 0, 0, .35); outline: 2px solid var(--c-white); outline-offset: 1px; }
+.cm-tab-all.active { background: var(--c-lblack); }
+.cm-tab-tarot.active { background: var(--set-tarot); }
+.cm-tab-planet.active { background: var(--set-planet); }
+.cm-tab-spectral.active { background: var(--set-spectral); }
+.ccard {
+  position: relative;
+  flex: 0 0 11.625%;   /* 每行固定 8 张：(100% - 7×1%) / 8；高度由 .cm-row 的行高拉伸得到 */
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, .18);
+}
+.ccard:hover { outline: 2px solid var(--c-orange); outline-offset: 1px; }
+.cm-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+/* 素材缺失时的占位（应仅在数据与资源不同步时出现） */
+.cm-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  font-size: 15px;
+  text-align: center;
+}
+.cm-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-black);
+  border: 2px solid var(--c-white);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-white);
+}
+.cm-desc { font-size: 16px; line-height: 1.4; }
+.cm-desc-name { font-size: 19px; font-weight: 700; }
+.cm-desc-hint { color: #9aa5a6; }
+.cm-hint { text-align: center; font-size: 14px; line-height: 1.35; color: #9aa5a6; flex: none; }
+.cm-actions { display: flex; gap: 12px; height: 40px; flex: none; }
+.cm-reset {
+  flex: none;
+  width: 144px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--c-red);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.cm-reset:hover { filter: brightness(1.08); }
+.cm-reset:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+.cm-done {
+  flex: 1;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--c-blue);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.cm-done:hover { filter: brightness(1.08); }
+.cm-done:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+
 /* ---------- 窄屏适配 ---------- */
 /* 参数面板换行到卡组下方（右侧放不下时） */
 @media (max-width: 920px) {
@@ -1001,6 +1234,8 @@ body::before {
   .cd-arrow { width: 42px; height: 42px; font-size: 17px; }
   .cd-body { padding: 14px 16px; gap: 12px; }
   .cd-btn { min-width: 0; flex: 1 1 0; font-size: 20px; }
+  /* 消耗牌弹窗：牌块随弹窗宽度缩小（尺寸来自 .ccard / .cm-row 的同一套 calc），只收紧角标 */
+  .cm-count { min-width: 20px; height: 19px; font-size: 12px; }
 }
 
 @media (max-width: 720px) {

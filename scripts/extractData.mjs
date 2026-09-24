@@ -85,8 +85,8 @@ function zhName(key, src = zhLua) {
   const m = /name\s*=\s*"((?:[^"\\]|\\.)*)"/.exec(block);
   return m ? m[1] : undefined;
 }
-function zhText(key) {
-  const block = extractBlock(zhLua, key);
+function zhText(key, src = zhLua) {
+  const block = extractBlock(src, key);
   if (!block) return [];
   const tm = /text\s*=\s*\{/.exec(block);
   if (!tm) return [];
@@ -273,3 +273,134 @@ console.log(`extracted ${seals.length} seals:`);
 for (const s of seals) console.log(`  ${s.key} #${s.order} ${s.zhName} colour=${s.colour}`);
 console.log(`extracted ${editions.length} editions:`);
 for (const e of editions) console.log(`  ${e.key} #${e.order} ${e.zhName} (${e.enName}) extra=${e.config.extra} colour=${e.colour}`);
+
+// ---- 7. 提取消耗牌（P_CENTERS 的 c_* → Tarot / Planet / Spectral）→ src/data/consumables.ts ----
+// 牌池顺序 = 游戏 P_CENTER_POOLS 的排法（按 order 升序，game.lua:827-830），故按 order 排序即可；
+// 只收 consumeable = true 且 set 属于三类的中心，c_locked / t_undiscovered 等占位中心自动排除。
+const CONSUMABLE_SETS = ['Tarot', 'Planet', 'Spectral'];
+const consumables = gameLua.split('\n')
+  .map(line => /^\s{8}(c_\w+)\s*=\s*\{.+\},?\s*$/.exec(line))
+  .filter(Boolean)
+  .map(m => [m[1], parseLuaLiteral(m[0].slice(m[0].indexOf('{')))])
+  .filter(([, def]) => def.consumeable === true && CONSUMABLE_SETS.includes(def.set))
+  .map(([key, def]) => ({ key, def }));
+
+// 牌型 → 1 级基础数值（Planet 描述里的 #3#/#4#；game.lua:2001 hands 表）
+const handBase = {};
+for (const line of gameLua.split('\n')) {
+  const m = /^\s*\["([^"]+)"\]\s*=\s*\{[^}]*?l_mult\s*=\s*([\d.]+)[^}]*?l_chips\s*=\s*([\d.]+)/.exec(line);
+  if (m) handBase[m[1]] = { l_mult: Number(m[2]), l_chips: Number(m[3]) };
+}
+// 牌型 / 花色中文名（zh_CN 的 poker_hands 与 suits_plural）
+// 注意键有两种写法：["Flush House"] 与 Pair=（无引号、无方括号）；后者必须以 \w 起头，
+// 否则惰性量词会从行首空格开始匹配，得到带前导空格的键名
+const handZh = {};
+for (const m of (extractBlock(zhLua, 'poker_hands') ?? '').matchAll(/\[?"?(\w[\w ]*?)"?\]?\s*=\s*"([^"]+)"/g)) handZh[m[1].trim()] = m[2];
+const suitZh = {};
+for (const m of (extractBlock(zhLua, 'suits_plural') ?? '').matchAll(/(\w+)\s*=\s*"([^"]+)"/g)) suitZh[m[1]] = m[2];
+const enhZh = new Map(enhancements.map(e => [e.key, e.zhName]));
+// 分类色（globals.lua SECONDARY_SET：塔罗紫 / 星球青 / 幻灵蓝）
+const secondarySet = {};
+for (const m of (blockAfter(globalsLua, 'SECONDARY_SET')).matchAll(/(\w+)\s*=\s*HEX\(\s*["']([0-9a-fA-F]{6,8})["']\)/g)) {
+  secondarySet[m[1]] = `#${m[2].slice(0, 6).toLowerCase()}`;
+}
+
+/** 按游戏 generate_card_ui 的 loc_vars 规则给出 #N# 候选取值（common_events.lua:2623-2712）。
+ *  全部取「开局状态」：等级 1、无小丑、概率基数 1（G.GAME.probabilities.normal）。 */
+function consumableVarValues(key, def) {
+  const c = def.config ?? {};
+  if (def.set === 'Planet') {
+    const base = handBase[c.hand_type] ?? { l_mult: 0, l_chips: 0 };
+    return [1, handZh[c.hand_type] ?? c.hand_type, base.l_mult, base.l_chips];
+  }
+  if (def.set === 'Spectral') {
+    // 使魔/严峻/咒语取 extra；火祭取 {destroy, dollars}；神秘生物取 extra；灵质的 #1# = ecto_minus（开局 1）
+    if (key === 'c_immolate') return [c.extra?.destroy, c.extra?.dollars];
+    if (key === 'c_ectoplasm') return [1];
+    if (c.extra !== undefined && typeof c.extra === 'number') return [c.extra];
+    return [];
+  }
+  // Tarot：#1# 多为 max_highlighted，#2# 是增强/花色名（命运之轮与节制例外）
+  switch (key) {
+    case 'c_wheel_of_fortune': return [1, c.extra];
+    case 'c_temperance': return [c.extra, 0];   // #2# = min(extra, 小丑售价和)：开局无小丑 → 0
+    case 'c_star': case 'c_moon': case 'c_sun': case 'c_world':
+      return [c.max_highlighted, suitZh[c.suit_conv] ?? c.suit_conv];
+    case 'c_magician': case 'c_empress': case 'c_heirophant': case 'c_lovers':
+    case 'c_chariot': case 'c_justice': case 'c_devil': case 'c_tower':
+      return [c.max_highlighted, enhZh.get(c.mod_conv) ?? c.mod_conv];
+    default: break;
+  }
+  if (c.mod_conv === 'up_rank') return [c.max_highlighted, '点数'];   // 力量：#2# 未被文本使用
+  if (c.planets !== undefined) return [c.planets];
+  if (c.tarots !== undefined) return [c.tarots];
+  if (c.extra !== undefined) return [c.extra];
+  if (c.max_highlighted !== undefined) return [c.max_highlighted];
+  return [];
+}
+
+const consumableDefs = CONSUMABLE_SETS.flatMap(set => {
+  const zhBlock = extractBlock(zhLua, set) ?? '';
+  return consumables.filter(c => c.def.set === set).map(({ key, def }) => {
+    const text = zhText(key, zhBlock);
+    // 取值表按文本真正用到的最大序号截断：文本没用到的位置不上屏（如力量只用 #1#）
+    const used = Math.max(0, ...[...text.join('').matchAll(/#(\d+)#/g)].map(m => Number(m[1])), 0);
+    const vars = consumableVarValues(key, def).slice(0, used);
+    if (vars.length < used) console.warn(`  ! ${key} 的 #N# 取值不足（用 ${used} 个，得 ${vars.length} 个），对应描述行将不显示`);
+    return {
+      key,
+      enName: def.name,
+      zhName: zhName(key, zhBlock) ?? def.name,
+      set: def.set,
+      order: def.order,
+      cost: def.cost,
+      pos: def.pos,
+      /** 素材文件名（含空格，1:1 复制自 Resources/<set>/） */
+      image: `${def.name}.png`,
+      hidden: def.hidden === true,
+      effect: def.effect,
+      config: def.config ?? {},
+      text,
+      vars,
+      colour: secondarySet[def.set] ?? '#ffffff',
+    };
+  }).sort((a, b) => a.order - b.order);
+});
+
+const consumableBody = `export type ConsumableSet = 'Tarot' | 'Planet' | 'Spectral';
+
+export interface ConsumableDef {
+  key: string;
+  /** 英文名 = 素材文件名前缀（assets/{tarot|planet|spectral}/<enName>.png） */
+  enName: string;
+  zhName: string;
+  set: ConsumableSet;
+  order: number;
+  /** 售价（塔罗/星球 3、幻灵 4）；开局持有实例的 sell_cost = floor(cost / 2) */
+  cost: number;
+  /** Tarots.png 图集坐标（10 列 × 6 行，格 142×190） */
+  pos: { x: number; y: number };
+  /** 素材文件名（保留原始空格） */
+  image: string;
+  /** 未解锁（灵魂 / 黑洞）：游戏内以占位图隐藏 */
+  hidden: boolean;
+  effect?: string;
+  /** 中心 config，消耗牌效果参数的存档来源 */
+  config: Record<string, unknown>;
+  /** 中文描述行（原始文本，含 {C:xx} 标记与 #N# 占位符） */
+  text: string[];
+  /** #N# 取值（开局状态静态解析；序号未用到的位置不占位） */
+  vars: (number | string)[];
+  /** 分类色（G.C.SECONDARY_SET：塔罗紫 / 星球青 / 幻灵蓝） */
+  colour: string;
+}
+
+export const CONSUMABLES: ConsumableDef[] = ${JSON.stringify(consumableDefs, null, 2)};
+`;
+writeFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/data/consumables.ts'),
+  `// AUTO-GENERATED by scripts/extractData.mjs — DO NOT EDIT\n// 来源: Code/game.lua P_CENTERS(c_*) / P_CENTER_POOLS + Code/localization/zh_CN.lua + globals.lua G.C.SECONDARY_SET\n` + consumableBody);
+for (const set of CONSUMABLE_SETS) {
+  const list = consumableDefs.filter(d => d.set === set);
+  console.log(`extracted ${list.length} ${set} consumables:`);
+  for (const d of list) console.log(`  ${d.key} #${d.order} ${d.zhName} (${d.enName}) cost=${d.cost} pos=${d.pos.x},${d.pos.y} vars=[${d.vars.join(',')}]${d.hidden ? ' [hidden]' : ''}`);
+}

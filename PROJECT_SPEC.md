@@ -65,6 +65,8 @@ BalatroSaveGenerator/               # 工作区根（git 仓库 = Web/，见 7 �
     │   └── embedTemplate.mjs       # 解压 references/save/template.jkr → src/data/
     ├── assets/                     # 复制进来的图片与字体（见第 4 章）
     │   ├── decks/                  # ← Resources/deck/*.png
+    │   ├── tarot/ planet/ spectral/  # ← Resources/{tarot,planet,spectral}/*.png（消耗牌 22/12/18，全卡整图）
+    │   ├── enhancement/ seal/ cards/  # ← Resources/ 同名目录
     │   ├── fonts/                  # ← Code/resources/fonts/
     │   └── ui/                     # ← Resources/icon、Resources/logo
     ├── test/                       # vitest（roundtrip.test.ts 为强制门禁）
@@ -78,11 +80,14 @@ BalatroSaveGenerator/               # 工作区根（git 仓库 = Web/，见 7 �
         │   ├── luaTable.ts         # Lua table 解析器 + STR_PACK 序列化器
         │   ├── deflate.ts          # fflate raw-deflate(level 1) 封装
         │   ├── saveDeck.ts         # 牌组/赌注 → 存档字段修改规则
+        │   ├── consumables.ts      # 消耗牌查询 / 牌组默认 / 槽位容量（界面逻辑，纯函数）
         │   ├── generate.ts         # 组装入口 generateSave(...): Uint8Array
         │   └── validate.ts         # 生成前结构断言 validateSave(save)
         ├── data/                   # ⚙ 脚本单向生成，禁止手改
         │   ├── backs.ts            # b_* 牌组定义（P_CENTERS 提取）
         │   ├── stakes.ts           # 赌注定义（P_CENTER_POOLS.Stake 提取）
+        │   ├── cardMods.ts         # 增强 / 蜡封 / 版本（m_*、P_SEALS、e_* 提取）
+        │   ├── consumables.ts      # 消耗牌定义（c_* 提取：名称/描述/图集坐标/vars）
         │   └── templateSource.ts   # 模板 Lua 源码字符串（embedTemplate 生成）
         ├── ui/                     # 界面组件（原生 DOM）
         └── style/                  # 样式与 CSS 变量
@@ -223,6 +228,26 @@ body { font-family: 'm6x11', 'Noto Sans SC', monospace; }
 - 牌组弹窗底部按钮：`重置`（红，按牌组规则重建）/ `创建卡牌`（蓝，以 `mode='create'` 打开同一弹窗且隐藏「确定」）/ `保存`（橙，关闭弹窗）。新建牌初值 = `blankCard()`（黑桃 A、无增强无蜡封无版本），追加到牌堆末尾后统一 `renumberDeck`。版本组五组箭头均为可用状态，切换即时预览（见 §5.7）。
 - 至少保留 1 张牌（0 张无法通过 `validateSave` 的「牌堆不能为空」）；工作牌堆与所选牌组不一致或手工增删过时，仅在「重置」按钮的悬停文案里说明（不做视觉高亮）。
 
+**消耗牌入口（`.consumables-entry`，v1 仅界面配置，尚未写入存档）**
+
+- 位置：右侧参数列（`.run-params-col`）内、参数面板**正下方**，宽度与种子条 / 参数面板一致（258px）；主页 `.actions` 不再放消耗牌按钮。
+- 内容一行一个含义：左「消耗牌 N / M」（N = 已选张数、M = 参数面板的「消耗品」槽位数，实时读取），右「修改消耗牌」按钮（紫 `G.C.PURPLE`，打开图鉴弹窗）；下一行平铺已有消耗牌的牌面（52×70，142:190），未占满时用虚线空槽补齐（虚线沿用 `.param-input` 的下虚线语汇，一眼看出还剩几个空位），空槽最多画 6 个（槽位数可填到 99）。
+- 交互：**左键点已有牌 = 移除该张**（toast 提示），是列表唯一的移除入口；槽位数被调小到低于已选数量时计数标红（`.ce-over`）并禁止继续添加，不自动删除已选牌。
+- 高度做了压缩（计数与按钮同一行、牌面 52×70、内边距收紧），使 1280×720 视口仍保持单屏、不出现纵向滚动条（与 5046b73 的单屏目标一致）。
+
+**消耗牌图鉴弹窗（`.consumables-modal`）**
+
+- 入口：主页「修改消耗牌」按钮。弹窗只做**图鉴**：不展示已有消耗牌列表（已有牌与其移除都在入口里）。
+- 结构自上而下：标题「消耗牌图鉴」/ 分类标签 / 牌池（左右箭头 + 两行牌面）/ 页点 / 提示行 / 操作行（`重置` 红 144px、`完成` 蓝铺满）。
+- 分类标签 `全部 / 塔罗牌 / 星球牌 / 幻灵牌`（数量 52 / 22 / 12 / 18，选中态 = 分类色底 + 2px 白描边，白描边是本站既有的选中语汇）。
+- 牌池为**固定版式分页**，不做滚动条：每页 2 行 × 每行 8 张（`PAGE_SIZE = 16`），左右各一个 `.arrow-btn` 翻页，下方页点（复用牌组选择的 `.dots/.dot`）标出页码；只有一页时翻页控件用 `visibility` 收起（保留占位，牌池宽度不变）。牌块宽度 `flex: 0 0 11.625%`（(100% − 7×1%) / 8），**行高用整行的 `aspect-ratio: 6.429/1` 锁死**——间距取百分比后行高只与行宽相关，因此空行也保持同样高度，翻页时弹窗不跳动。
+- 交互：**左键点击牌面即添加**（允许重复，与真机魔法牌组「愚者×2」一致）；已被选中的牌右下角显示 `×N` 角标；槽位满时不添加并提示「消耗品槽位已满（M），可在右侧参数面板调大槽位数」。换分类标签回到第 1 页。
+- 数量为**硬上限**（`core/consumables.ts:canAddConsumable`），上限实时取自参数面板，改了槽位数立刻生效。
+- 「重置」恢复当前牌组开局自带的消耗牌（`backs.ts` 的 `config.consumables`：魔法 = 愚者×2、幽灵 = 妖法×1、其余为空），并同时刷新入口；与默认不一致时仅改悬停文案（与牌组编辑弹窗同一约定）。
+- **说明框是悬停才浮出的独立框体**（`.cm-desc-pop`，绝对定位到牌池右上角，`display: none` → 悬停时 `.show`）：平时**完全不占位、不预留空白**，也不影响牌池布局；`pointer-events: none` 保证它不会抢走悬停目标（否则鼠标一进框体就会来回闪）。内容用 `renderDescLine(line, vars)` 渲染 `{C:xx}` 配色，`zhName` 按分类色 `--set-tarot/-planet/-spectral` 上色。`#N#` 取值由提取脚本按**开局状态**静态解析（等级 1、无小丑、概率基数 1），取不到的行整行省略（`c_temperance` 的当前小丑售价合计即此类）。
+- 弹窗打开时方向键不再切换牌组／赌注（与牌组编辑、详情弹窗同一套键盘守卫）。
+- 灵魂 / 黑洞（`hidden = true`）同样列为可选：本工具面向「开局想要什么就放什么」，不做游戏内图鉴的未解锁灰化。
+
 **页面背景**
 
 - 纯色 `--c-black`（#374244）。**不做**漩涡 shader、不做动态背景、不做粒子。
@@ -262,8 +287,9 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 | `assets/ui/ui_*.png` | `Resources/ui_asset/` | 游戏 UI 小图标（`ui_{x}_{y}` = `ui_assets.png` 图集切片）：`{3,1}`黑桃 `{0,1}`红桃 `{2,1}`梅花 `{1,1}`方片、`{1,0}`A `{2,0}`人头牌 `{3,0}`数字牌（坐标语义依据 `UI_definitions.lua:3368-3378` 的 `tally_sprite`） | 36×36 PNG（2× 资源，18×18 逻辑像素；深色像素图，需衬浅色底） |
 | `assets/enhancement/` | `Resources/enhancement/` | 8 张增强牌底板 + `Normal.png`（**空白牌底板**，无增强时用） | 142×190 PNG（整张完整牌面底，直接铺在 `.pcard` 上，不另绘白底/描边） |
 | `assets/seal/` | `Resources/seal/` | 4 张蜡封（Red/Blue/Gold/Purple） | 142×190 PNG（**与牌面同尺寸、带透明留白**，按整张铺在牌面上即自动对齐，不要按裁剪图定位） |
+| `assets/tarot/` `assets/planet/` `assets/spectral/` | `Resources/{tarot,planet,spectral}/` | 22 / 12 / 18 张消耗牌（塔罗/星球/幻灵）整卡图，文件名 = 英文名（含空格） | 142×190 PNG（**整卡**：自带描边与画框，无需底板或裁剪） |
 
-后续版本按需追加（`joker/` 152 张、`cards/` 52 张、`blind/`、`tag/`、`tarot/`、`planet/`、`spectral/`、`voucher/`、`enhancement/`、`seal/`、`sticker/` 均已在 `Resources/` 备好，规格见附录 A）。
+后续版本按需追加（`joker/` 152 张、`blind/`、`tag/`、`voucher/`、`sticker/` 均已在 `Resources/` 备好，规格见附录 A）。
 
 ### 4.3 缺失资源处理流程
 
@@ -394,7 +420,9 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 
 ### 5.6 消耗品卡对象（魔法/幽灵牌组专用）
 
-**✅ 已解决**：用户已提供真机样例存档（`references/save/sample/magic_initial.jkr`、`references/save/sample/ghost_initial.jkr`），`c_fool`（愚者）与 `c_hex`（妖法）的完整 `Card:save` 结构已提取，固化在**附录 D** 作为生成蓝本。魔法/幽灵牌组在 v1 正常交付，无禁用项。
+**⚠️ 状态：v1 仅界面，尚未写入存档。** 消耗牌的选择入口与弹窗已完成（见 3.3），但 `core/generate.ts` 仍只写牌堆与数值：`cardAreas.consumeables.cards` 恒为空表，`backs.ts` 的 `config.consumables`（魔法愚者×2 / 幽灵妖法×1）与 `used_vouchers.v_crystal_ball` 也尚未落到存档，因此当前导出的魔法/幽灵牌组存档**不带**开局消耗牌（与真机样例存在已知差异）。下面与附录 D 是写入时的生成蓝本，实现后需同批补 validate 断言与对样例存档的字段级测试。
+
+**✅ 结构已解决**：用户已提供真机样例存档（`references/save/sample/magic_initial.jkr`、`ghost_initial.jkr`），`c_fool`（愚者）与 `c_hex`（妖法）的完整 `Card:save` 结构已提取，固化在**附录 D** 作为生成蓝本。
 
 生成规则要点（详见附录 D）：
 
@@ -451,7 +479,7 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 | v1（MVP） | 15 种牌组选择（魔法/幽灵待消耗品样本）→ 生成并下载 `save.jkr` + 使用说明弹窗；**赌注选择（白注~金注）** | 进行中（牌组+赌注已实现，牌组规则数值未应用） |
 | v1.1 | 基础数值自定义：金钱、手牌数、弃牌数、手牌区大小、小丑/消耗品槽位；牌组规则落地（deckRules） | 进行中（数值与牌组数值修正已实现；牌组非数值规则待补：星云/黄道起始优惠券、幽灵出现率、绿牌组无利息） |
 | v1.2 | **卡牌「版本」**（闪箔/全息/多彩/负片）：`edition` 存档字段 + 四个 shader 的 WebGL 移植（单共享 context）+ 详情弹窗预览 | 进行中 |
-| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 规划（8 级赌注已实现） |
+| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 进行中（**起始消耗品：界面完成**——入口/弹窗/筛选/增删/说明/牌组默认已交付，写入存档与 validate 断言待补，见 5.6；8 级赌注已实现） |
 | v3 | 进阶：牌型起始等级、优惠券、商店概率、逐张定制 52 张牌（强化/版本/印章）、起始底注 | 规划 |
 | 远期 | 解析已有存档、场景级 shader/动效增强（背景漩涡、溶解动画等；卡牌版本 shader 已单列为 v1.2） | 不承诺 |
 
@@ -503,7 +531,7 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 | `deck/` | 16 | 142×190 | v1 牌组选择 |
 | `joker/` | 152 | 142×190 | v2 起始小丑 |
 | `cards/` | 52 | 142×190 | v2+ 牌面预览（`S_A.png` 命名：花色_点数） |
-| `tarot/` `planet/` `spectral/` | 22 / 12 / 18 | 142×190 | v2 起始消耗品 |
+| `tarot/` `planet/` `spectral/` | 22 / 12 / 18 | 142×190 | v2 起始消耗品（**已复制进 `Web/assets/`**，界面已用） |
 | `voucher/` | 34 | 142×190 | v3 优惠券 |
 | `enhancement/` `seal/` `sticker/` | 8 / 4 / 11 | 142×190 | v3 逐张定制 |
 | `blind/` | 31 | 68×68 | 远期 |
@@ -577,7 +605,7 @@ tags = 空
 | Stake | 赌注（白色→黑色 8 级） |
 | Voucher | 优惠券 |
 | Joker | 小丑牌 |
-| Tarot / Planet / Spectral | 塔罗牌 / 星球牌 / 光谱牌 |
+| Tarot / Planet / Spectral | 塔罗牌 / 星球牌 / **幻灵牌**（`zh_CN.lua:3513` 的 `b_spectral_cards`；旧版文档写作「光谱牌」，以游戏文案为准） |
 | Consumable | 消耗牌 |
 | b_red 红色牌组 · b_blue 蓝色牌组 · b_yellow 黄色牌组 · b_green 绿色牌组 · b_black 黑色牌组 · b_magic 魔法牌组 · b_nebula 星云牌组 · b_ghost 幽灵牌组 · b_abandoned 废弃牌组 · b_checkered 方格牌组 · b_zodiac 黄道牌组 · b_painted 彩绘牌组 · b_anaglyph 浮雕牌组 · b_plasma 等离子牌组 · b_erratic 古怪牌组 | |
 | v_crystal_ball 水晶球 · v_telescope 望远镜 · v_tarot_merchant 塔罗牌商人 · v_planet_merchant 星球牌商人 · v_overstock_norm 库存过剩 · c_fool 愚者 · c_hex 妖法 | |

@@ -1,13 +1,17 @@
 import './style/main.css';
 import { BACKS } from './data/backs';
 import { STAKES } from './data/stakes';
+import type { ConsumableDef } from './data/consumables';
 import { generateSave } from './core/generate';
 import { blankCard, defaultDeckCards, renumberDeck, type DeckCard } from './core/deckGen';
+import { deckDefaultConsumables, sameConsumables } from './core/consumables';
 import { createDeckSwitcher } from './ui/deckSwitcher';
 import { createStakeSwitcher } from './ui/stakeSwitcher';
 import { createRunParamsPanel, deckInit } from './ui/runParamsPanel';
 import { createDeckEditorModal, type CardEditAction } from './ui/deckEditorModal';
 import { createCardDetailModal } from './ui/cardDetailModal';
+import { createConsumablesModal } from './ui/consumablesModal';
+import { createConsumablesEntry } from './ui/consumablesEntry';
 import { createUsageModal, autoShowOnce, showToast } from './ui/usageModal';
 import { h } from './ui/dom';
 
@@ -21,11 +25,19 @@ const chipImages = import.meta.glob('../assets/stakes/*.png', {
   query: '?url',
   import: 'default',
 }) as Record<string, string>;
+// 消耗牌素材按牌组类型分目录（assets/tarot|planet|spectral/<英文名>.png，文件名含空格）
+const consumableImages = import.meta.glob('../assets/{tarot,planet,spectral}/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
 const imageUrl = (enName: string): string | undefined =>
   deckImages[`../assets/decks/${enName}.png`];
 const chipUrl = (file: string): string | undefined =>
   chipImages[`../assets/stakes/${file}`];
+const consumableUrl = (def: ConsumableDef): string | undefined =>
+  consumableImages[`../assets/${def.set.toLowerCase()}/${def.image}`];
 
 const selectable = BACKS.filter(b => !b.omit);
 
@@ -51,6 +63,9 @@ let workingCards: DeckCard[] = [];
 let deckSource = currentDeck.key;
 /** 是否手工增删过牌面（重置后清零） */
 let deckEdited = false;
+// 工作消耗牌（键名数组）：随牌组切换按该牌组默认重建（魔法 = 愚者×2、幽灵 = 妖法×1，其余为空）。
+// v1 仅界面配置，暂不写入导出存档（PROJECT_SPEC.md 5.6 记录后续项）
+let workingConsumables: string[] = [];
 const runParams = createRunParamsPanel(deckInit(selectable[0], 1));
 const cardDetail = createCardDetailModal();
 const deckEditor = createDeckEditorModal({
@@ -66,11 +81,41 @@ const deckEditor = createDeckEditorModal({
     cardDetail.open({ card: blankCard(), mode: 'create', onCreate: handlers.onCreate }),
   isStale: () => deckSource !== currentDeck.key || deckEdited,
 });
+// 消耗牌弹窗（图鉴）：槽位上限直接读参数面板的「消耗品」值，「重置」回到当前牌组默认
+const consumables = createConsumablesModal({
+  capacity: () => runParams.values().consumableSlots,
+  imageUrl: consumableUrl,
+  onChange: setConsumables,
+  onReset: () => {
+    rebuildConsumables();
+    return workingConsumables;
+  },
+  isStale: () => !sameConsumables(workingConsumables, deckDefaultConsumables(currentDeck)),
+});
+// 消耗牌入口：挂在参数面板下方（同属右侧参数列）
+const consumablesEntry = createConsumablesEntry({
+  capacity: () => runParams.values().consumableSlots,
+  imageUrl: consumableUrl,
+  onOpen: () => consumables.open(workingConsumables, currentDeck),
+  onRemove: index => {
+    const keys = [...workingConsumables];
+    keys.splice(index, 1);
+    setConsumables(keys);
+  },
+});
+runParams.root.appendChild(consumablesEntry.root);
+// 槽位数可手改：面板里数值一变就重绘入口（空槽数量、N / M 计数都要跟着变）。
+// input 与 change 都听：边打字边反映，失焦提交时再兜一次
+for (const type of ['input', 'change'] as const) {
+  runParams.root.addEventListener(type, () => consumablesEntry.render(workingConsumables));
+}
 const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
   currentDeck = def;
   runParams.refresh(def, currentStake);
+  rebuildConsumables();   // 消耗牌是牌组派生状态，与参数面板一起随牌组切换
   // 牌堆保持原样（不自动按新牌组重建）；弹窗开着时只同步牌组名与描述
   if (deckEditor.isOpen()) deckEditor.open(def, workingCards);
+  if (consumables.isOpen()) consumables.open(workingConsumables, def);
 }, () => deckEditor.open(currentDeck, workingCards));
 
 /** 按当前牌组与种子重建默认牌堆（含古怪牌组的种子随机与开局洗牌） */
@@ -81,6 +126,18 @@ function rebuildDeck(): void {
   deckSwitcher.setCount(workingCards.length);
 }
 rebuildDeck();
+
+/** 消耗牌列表的唯一写入口：同步工作状态与入口展示（弹窗持有自己的副本，关闭后以这里为准） */
+function setConsumables(keys: string[]): void {
+  workingConsumables = keys;
+  consumablesEntry.render(workingConsumables);
+}
+
+/** 按当前牌组的默认起始消耗牌重建列表（取自 backs.ts 的 config.consumables，见 core/consumables） */
+function rebuildConsumables(): void {
+  setConsumables(deckDefaultConsumables(currentDeck));
+}
+rebuildConsumables();
 
 /** 牌堆手工编辑：右键删除；左键详情里的属性改动（type='modify'，牌对象已就地改好）；
  *  「创建新的」新增一张（type='create'，不影响原有牌） */
@@ -129,6 +186,7 @@ app.append(
   modal.root,
   deckEditor.root,
   cardDetail.root,
+  consumables.root,
   h('div', { class: 'toast', 'aria-live': 'polite' }),
 );
 
@@ -158,6 +216,8 @@ helpBtn.addEventListener('click', () => modal.open());
 document.addEventListener('keydown', e => {
   if (modal.root.classList.contains('show')) return;
   if (cardDetail.root.classList.contains('show')) return;   // 详情弹窗打开时方向键不切牌组
+  if (deckEditor.root.classList.contains('show')) return;   // 牌组编辑弹窗打开时方向键不切牌组
+  if (consumables.root.classList.contains('show')) return;  // 消耗牌弹窗打开时方向键不切牌组
   if (e.target instanceof HTMLInputElement) return; // 参数输入框内方向键用于调数值
   if (e.key === 'ArrowLeft') deckSwitcher.prev();
   if (e.key === 'ArrowRight') deckSwitcher.next();
