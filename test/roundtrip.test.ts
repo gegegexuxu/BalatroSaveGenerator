@@ -9,7 +9,7 @@ import { generateSave } from '../src/core/generate';
 import { validateSave } from '../src/core/validate';
 import { LuaTable } from '../src/core/luaTable';
 
-const original = readFileSync(new URL('../../Save/1/save.jkr', import.meta.url));
+const original = readFileSync(new URL('../references/save/template.jkr', import.meta.url));
 
 describe('luaTable 序列化器（强制门禁）', () => {
   it('嵌入模板 = 原 save.jkr 解压结果（模板保真）', () => {

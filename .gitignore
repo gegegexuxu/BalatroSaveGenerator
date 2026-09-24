@@ -6,3 +6,9 @@ dist/
 *.log
 *.local
 .DS_Store
+
+# 个人实时存档（活文件，含 Steam 账号信息，勿入库；仅 sample/ 与 template.jkr 入库）
+references/save/1/
+references/save/2/
+references/save/settings.jkr
+references/save/steam_autocloud.vdf
