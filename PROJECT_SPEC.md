@@ -53,6 +53,7 @@ BalatroSaveGenerator/               # 工作区根（git 仓库 = Web/，见 7 �
 ├── Save/                           # 个人活存档（不入库：存档位 1/2、settings、Steam 配置）
 └── Web/                            # ★ git 仓库根 = 网页工程
     ├── PROJECT_SPEC.md             # 本文档
+    ├── README.md                   # 项目入口：学习用途与版权声明、存档风险提示、使用方法
     ├── package.json / vite.config.ts / tsconfig.json
     ├── references/                 # 参考存档（只读，模板提取用）
     │   └── save/
