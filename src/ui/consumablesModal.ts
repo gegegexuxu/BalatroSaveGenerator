@@ -1,39 +1,40 @@
-// 消耗牌图鉴弹窗（v1 仅界面）：分类筛选 + 固定两行 × 最多 8 张的分页牌池（左右箭头翻页，不做滚动条），
-// 左键点击即添加（可重复，与真机魔法牌组「愚者×2」一致），已选中的牌显示 ×N 角标。
-// 说明框不占位、常驻：只有悬停某张牌时，右侧才浮出一个独立框体显示该牌说明（pointer-events 关掉，避免遮挡引发悬停抖动）。
-// 已有消耗牌的展示与移除在主页入口（ui/consumablesEntry）里，本弹窗只负责图鉴与添加。
-// 美术与交互沿用牌组编辑弹窗；写入存档留待下一轮（PROJECT_SPEC.md 5.6）。
-import type { BackDef } from '../data/backs';
+// 消耗牌图鉴弹窗：分类筛选 + 两行 × 每行 6 张分页牌池；点牌即选入并关闭，「返回」不选任何牌。
+// 「负片开启/关闭」开关也在本弹窗：开 = 牌池整卡按负片样式预览，此刻点选的牌带负片入列；
+// 关 = 原样预览，点选的牌不带负片（负片是逐牌属性，加入时刻的开关状态决定）。
+// 悬停说明框由 showDesc 动态定位；已有消耗牌的展示与移除在主页入口（ui/consumablesEntry）；
+// 存档写入见 core/saveDeck.applyConsumablesToSave（PROJECT_SPEC.md 5.6）。
 import { type ConsumableDef } from '../data/consumables';
+import { type ConsumableItem } from '../core/consumables';
 import {
-  canAddConsumable, listConsumables, SET_LABELS, SET_ORDER, type SetFilter,
+  canAddConsumable, listConsumables, SET_LABELS, SET_ORDER,
 } from '../core/consumables';
 import { h, renderDescLine } from './dom';
 import { showToast } from './usageModal';
+import { consumableCardImage } from './consumableCard';
 
-/** 每页 2 行 × 8 张（固定版式：不做滚动条，翻页按钮切换） */
+/** 每页 2 行 × 6 张（固定版式：不做滚动条，翻页按钮切换） */
 const PAGE_ROWS = 2;
-const PAGE_COLS = 8;
+const PAGE_COLS = 6;
 const PAGE_SIZE = PAGE_ROWS * PAGE_COLS;
 
 export interface ConsumablesModal {
   root: HTMLElement;
-  /** 打开弹窗：keys = 工作列表（仅用于图鉴角标与「重置」判定），def = 当前牌组 */
-  open(keys: string[], def: BackDef): void;
+  /** 打开弹窗：items = 工作列表（仅用于 ×N 角标） */
+  open(items: ConsumableItem[]): void;
   isOpen(): boolean;
 }
 
 export interface ConsumablesOptions {
-  /** 槽位上限（参数面板的「消耗品」槽位数，实时读取，改了参数立刻生效） */
+  /** 槽位上限（参数面板的「消耗牌」槽位数，实时读取；仅作点牌时的兜底判断） */
   capacity: () => number;
+  /** 负片开关当前状态（开 = 牌池按负片预览，点选的牌带负片） */
+  negative: () => boolean;
+  /** 点「负片开启/关闭」：切换开关（调用方负责重绘本弹窗与主页入口） */
+  onToggleNegative: () => void;
   /** 牌面图（assets/{tarot|planet|spectral}/<enName>.png） */
   imageUrl: (def: ConsumableDef) => string | undefined;
-  /** 添加 / 重置后同步给主页面保存 */
-  onChange: (keys: string[]) => void;
-  /** 列表是否与当前牌组默认不一致（不一致时「重置」的悬停文案改为提示） */
-  isStale?: () => boolean;
-  /** 重置为当前牌组默认，返回新的键列表 */
-  onReset: () => string[];
+  /** 选中某张牌：主页面按当前开关状态把它加进工作列表并重绘入口；调用后弹窗自动关闭 */
+  onPick: (key: string) => void;
 }
 
 /** 行内 #N# 是否都有取值：取不到的（依赖局内数值，如节制的当前小丑售价）整行不上屏 */
@@ -44,28 +45,43 @@ function hasAllVars(line: string, vars: (number | string)[]): boolean {
 export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesModal {
   const close = (): void => overlay.classList.remove('show');
 
-  let list: string[] = [];
-  let deck: BackDef | undefined;
-  let filter: SetFilter = 'all';
+  let items: ConsumableItem[] = [];
+  let filter = 'Tarot' as import('../data/consumables').ConsumableSet;   // 默认塔罗牌
   let page = 0;
 
   // ---------- 说明浮框（悬停某张牌时出现，平时不占位） ----------
   const descEl = h('div', { class: 'cm-desc' });
   const descPop = h('div', { class: 'cm-desc-pop' }, [descEl]);
 
-  function showDesc(def: ConsumableDef): void {
+  function showDesc(def: ConsumableDef, tile: HTMLElement): void {
     const lines = def.text.filter(l => l !== '' && hasAllVars(l, def.vars));
     const body = lines.length
       ? lines.map(l => `<p>${renderDescLine(l, def.vars)}</p>`).join('')
       : '<p class="cm-desc-hint">（暂无可用文本）</p>';
     descEl.innerHTML = `<p class="cm-desc-name" style="color:${def.colour}">${def.zhName}</p>${body}`;
     descPop.classList.add('show');
+    // 动态定位：贴在悬停牌的左右两侧（右侧放不下就换到左侧），顶部与牌对齐并夹在牌池内
+    const POP_GAP = 8;
+    const pool = rows.getBoundingClientRect();
+    const rect = tile.getBoundingClientRect();
+    const popW = descPop.offsetWidth;
+    const popH = descPop.offsetHeight;
+    let left: number;
+    if (pool.right - rect.right - POP_GAP >= popW) {
+      left = rect.right - pool.left + POP_GAP;
+    } else {
+      left = rect.left - pool.left - POP_GAP - popW;
+    }
+    left = Math.max(4, Math.min(left, pool.width - popW - 4));
+    const top = Math.max(4, Math.min(rect.top - pool.top, pool.height - popH - 4));
+    descPop.style.left = `${Math.round(left)}px`;
+    descPop.style.top = `${Math.round(top)}px`;
   }
   const hideDesc = (): void => { descPop.classList.remove('show'); };
 
   // ---------- 牌池：固定两行分页 ----------
   const rowEls = [h('div', { class: 'cm-row' }), h('div', { class: 'cm-row' })];
-  // 说明浮框挂在牌池内（绝对定位到右上角），不参与布局，故平时不占任何位置
+  // 说明浮框挂在牌池内（绝对定位），不参与布局
   const rows = h('div', { class: 'cm-pages' }, [...rowEls, descPop]);
   const dots = h('div', { class: 'dots cm-dots' });
   const prevBtn = h('button', { class: 'arrow-btn cm-arrow', text: '◀' });
@@ -74,30 +90,32 @@ export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesMod
   const tabRow = h('div', { class: 'cm-tabs' });
 
   function countOf(key: string): number {
-    return list.filter(k => k === key).length;
+    return items.filter(it => it.key === key).length;
   }
 
   function makeTile(def: ConsumableDef): HTMLElement {
     const url = opts.imageUrl(def);
     const inner: HTMLElement = url
-      ? (h('img', { class: 'cm-img', src: url, alt: def.enName }) as HTMLImageElement)
+      ? consumableCardImage(def, url, opts.negative(), 'cm-img')
       : h('span', { class: 'cm-fallback', text: def.zhName });
     const tile = h('div', { class: 'ccard' }, [inner]);
     const owned = countOf(def.key);
     if (owned > 1) tile.appendChild(h('span', { class: 'cm-count', text: `×${owned}` }));
-    tile.setAttribute('title', `左键添加：${def.zhName}（${SET_LABELS[def.set]}）`);
     tile.addEventListener('click', () => {
       const cap = opts.capacity();
-      if (!canAddConsumable(list.length, cap)) {
-        showToast(`消耗品槽位已满（${cap}），可在右侧参数面板调大槽位数`);
+      // 负片牌使上限 +1（card.lua:405-417）：有效上限 = 槽位数 + 已有负片张数；
+      // 再点一张负片上限还会涨，故负片永远可加，普通牌按有效上限判断
+      const negCount = items.filter(it => it.negative).length;
+      const effective = cap + negCount;
+      if (!opts.negative() && !canAddConsumable(items.length, effective)) {
+        showToast(`消耗牌已达上限（${items.length}/${effective}）——开「负片」可继续添加，或调大参数面板的槽位数`);
         return;
       }
-      list.push(def.key);
-      opts.onChange([...list]);
-      renderPages();   // 刷新角标
-      syncResetHint();
+      opts.onPick(def.key);
+      showToast(opts.negative() ? `已添加「${def.zhName}」（负片）` : `已添加「${def.zhName}」`);
+      close();
     });
-    tile.addEventListener('mouseenter', () => showDesc(def));
+    tile.addEventListener('mouseenter', () => showDesc(def, tile));
     tile.addEventListener('mouseleave', hideDesc);
     return tile;
   }
@@ -110,7 +128,7 @@ export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesMod
     const all = listConsumables(filter);
     const pages = pageCount(all.length);
     page = Math.min(page, pages - 1);
-    // 两行错序铺牌（游戏图鉴也是按行读），不足一页时后面的格子留空
+    // 两行铺牌，不足一页时后面的格子留空
     for (let r = 0; r < PAGE_ROWS; r++) {
       const slice = all.slice((page * PAGE_ROWS + r) * PAGE_COLS, (page * PAGE_ROWS + r + 1) * PAGE_COLS);
       rowEls[r].replaceChildren(...slice.map(makeTile));
@@ -136,7 +154,7 @@ export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesMod
   nextBtn.addEventListener('click', () => turn(1));
 
   function renderTabs(): void {
-    const entries: [SetFilter, string][] = [['all', '全部'], ...SET_ORDER.map(s => [s, SET_LABELS[s]] as [SetFilter, string])];
+    const entries = SET_ORDER.map(s => [s, SET_LABELS[s]] as const);
     tabRow.replaceChildren(...entries.map(([value, label]) => {
       const tab = h('button', {
         class: `cm-tab cm-tab-${value.toLowerCase()}${value === filter ? ' active' : ''}`,
@@ -153,33 +171,23 @@ export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesMod
     }));
   }
 
-  // ---------- 操作行 ----------
-  const resetBtn = h('button', { class: 'cm-reset', text: '重置' });
-  /** 与牌组编辑一致：不入档的差异只改悬停文案（不做视觉高亮） */
-  function syncResetHint(): void {
-    const stale = opts.isStale?.() ?? false;
-    resetBtn.setAttribute('title', stale
-      ? '当前消耗牌不是该牌组的默认配置，点击恢复为该牌组开局自带的消耗牌'
-      : '恢复当前牌组开局自带的消耗牌（魔法牌组为愚者×2、幽灵牌组为妖法×1，其余牌组为空）');
-  }
-  resetBtn.addEventListener('click', () => {
-    list = opts.onReset();
-    page = 0;
-    renderPages();
-    syncResetHint();
-    showToast(`已重置为「${deck?.zhName ?? ''}」的默认消耗牌（${list.length} 张）`);
-  });
+  // ---------- 操作行：负片开关（仅影响之后点选的牌）+「返回」不选任何牌 ----------
+  const negBtn = h('button', { class: 'btn cm-neg', text: '负片关闭' });
+  negBtn.addEventListener('click', () => opts.onToggleNegative());
+  const backBtn = h('button', { class: 'cm-back', text: '返回' });
+  backBtn.addEventListener('click', close);
 
-  const doneBtn = h('button', { class: 'cm-done', text: '完成' });
-  doneBtn.addEventListener('click', close);
+  function syncNegBtn(): void {
+    const on = opts.negative();
+    negBtn.textContent = on ? '负片开启' : '负片关闭';
+    negBtn.classList.toggle('on', on);
+  }
 
   const panel = h('div', { class: 'consumables-modal' }, [
-    h('div', { class: 'cm-title', text: '消耗牌图鉴' }),
     tabRow,
     view,
     dots,
-    h('div', { class: 'cm-hint', text: '左键点击即添加（可重复）· 左右箭头翻页 · 移除请到主页「修改消耗牌」入口 · 数量上限为参数面板的「消耗品」槽位数 · v1 仅界面配置，暂不写入导出存档' }),
-    h('div', { class: 'cm-actions' }, [resetBtn, doneBtn]),
+    h('div', { class: 'cm-actions' }, [negBtn, backBtn]),
   ]);
 
   const overlay = h('div', { class: 'modal-overlay' }, [panel]);
@@ -188,14 +196,13 @@ export function createConsumablesModal(opts: ConsumablesOptions): ConsumablesMod
   return {
     root: overlay,
     isOpen: () => overlay.classList.contains('show'),
-    open(keys, def) {
-      list = [...keys];
-      deck = def;
+    open(list) {
+      items = [...list];
       page = 0;
       hideDesc();
       renderTabs();
       renderPages();
-      syncResetHint();
+      syncNegBtn();
       overlay.classList.add('show');
     },
   };

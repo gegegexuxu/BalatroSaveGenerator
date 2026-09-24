@@ -2,9 +2,19 @@
 // 建牌思路：模板里 52 张基础牌各一张，直接复用同花色同点数的模板卡表作原型，
 // 只改实例相关字段（playing_card / sort_id / rank / save_fields.card），
 // 其余字段（base 的颜色、点数、图集坐标等）天然正确，与游戏 Card:save() 的结构一致。
-import { LuaTable, cloneLuaTable, type LuaValue } from './luaTable';
+// 消耗牌写入（applyConsumablesToSave）：模板消耗区为空表，无原型可用，
+// 按附录 D（真机样例 magic/ghost_initial.jkr）从零构建卡表。
+import { LuaTable, cloneLuaTable, jsonToLua, type LuaValue } from './luaTable';
 import { ENHANCEMENTS, EDITIONS, type EnhancementDef } from '../data/cardMods';
+import { type ConsumableDef } from '../data/consumables';
+import { consumableByKey, type ConsumableItem } from './consumables';
+import type { BackDef } from '../data/backs';
 import type { DeckCard } from './deckGen';
+
+/** 开局消耗牌规格：items = 区内顺序（每张自带负片标记） */
+export interface ConsumablesSpec {
+  items: ConsumableItem[];
+}
 
 const SUIT_FILE: Record<string, string> = { Spades: 'S', Hearts: 'H', Clubs: 'C', Diamonds: 'D' };
 const VALUE_FILE: Record<string, string> = { Ace: 'A', King: 'K', Queen: 'Q', Jack: 'J', '10': 'T' };
@@ -69,11 +79,15 @@ const DECK_EDITIONS: readonly string[] = ['foil', 'holo', 'polychrome'];
 /** 生成 edition 表（Card:set_edition 的键序：数值 → 布尔 → type）。
  *  注意：set_edition 里的槽位 +1 只在 added_to_deck（局内获得）时发生，
  *  开局牌堆中的牌不触发，故这里不动 jokers/consumeables 的 card_limit */
-export function buildEdition(edition: string | undefined): LuaTable | undefined {
+export function buildEdition(
+  edition: string | undefined,
+  opts: { allowNegative?: boolean } = {},
+): LuaTable | undefined {
   if (!edition) return undefined;
   const def = EDITIONS.find(e => e.key === edition);
   if (!def) throw new Error(`未知版本类型: ${edition}`);
-  if (!DECK_EDITIONS.includes(def.key)) {
+  const negativeOk = opts.allowNegative === true && def.key === 'negative';
+  if (!DECK_EDITIONS.includes(def.key) && !negativeOk) {
     throw new Error(`扑克牌不支持「${def.zhName}」：负片仅作用于小丑与消耗品，游戏内扑克牌无法获得该版本`);
   }
   const t = new LuaTable();
@@ -130,4 +144,130 @@ export function applyDeckToSave(root: LuaTable, cards: DeckCard[]): void {
   cfg.set('temp_limit', cards.length);
 
   (root.get('GAME') as LuaTable).set('starting_deck_size', cards.length);
+}
+
+// ---------- 消耗牌写入（PROJECT_SPEC.md 5.6 / 附录 D）----------
+
+/** 全存档现有最大 sort_id（实例计数器续接用；附录 D.4：唯一即可） */
+function maxSortId(root: LuaTable): number {
+  let max = 0;
+  const areas = root.get('cardAreas') as LuaTable;
+  for (const name of ['deck', 'jokers', 'consumeables', 'hand', 'play', 'discard']) {
+    const area = areas.get(name);
+    if (!(area instanceof LuaTable)) continue;
+    const cards = area.get('cards');
+    if (!(cards instanceof LuaTable)) continue;
+    for (const [, node] of cards.entries) {
+      const sid = (node as LuaTable).get('sort_id');
+      if (typeof sid === 'number' && sid > max) max = sid;
+    }
+  }
+  return max;
+}
+
+/**
+ * 单张消耗牌卡表：18 键集合与键序按附录 D（真机样例），ability 数值按
+ * card.lua:277-307 set_ability 从 center 定义派生 —— extra 仅在 config.extra 存在时写
+ * （塔罗/星球无），ability.consumeable = 整个 center.config 的深拷贝
+ * （妖法 {extra=2}、愚者空表、星球 {hand_type=...}）。
+ */
+function buildConsumableCard(
+  def: ConsumableDef,
+  deck: BackDef,
+  rank: number,
+  sortId: number,
+  negative: boolean | undefined,
+): LuaTable {
+  const cfg = def.config;
+  const num = (k: string, dflt: number): number => (typeof cfg[k] === 'number' ? (cfg[k] as number) : dflt);
+  const ability = new LuaTable()
+    .set('set', def.set)
+    .set('name', def.enName)
+    .set('order', def.order);
+  if (def.effect !== undefined) ability.set('effect', def.effect);
+  if (cfg.extra !== undefined) ability.set('extra', jsonToLua(cfg.extra));
+  ability.set('consumeable', jsonToLua(cfg));
+  ability.set('bonus', num('bonus', 0));
+  ability.set('h_mult', num('h_mult', 0));
+  ability.set('mult', num('mult', 0));
+  ability.set('t_mult', num('t_mult', 0));
+  ability.set('t_chips', num('t_chips', 0));
+  ability.set('h_dollars', num('h_dollars', 0));
+  ability.set('p_dollars', num('p_dollars', 0));
+  ability.set('h_size', num('h_size', 0));
+  ability.set('d_size', num('d_size', 0));
+  ability.set('x_mult', num('Xmult', 1));
+  ability.set('perma_bonus', 0);
+  ability.set('extra_value', 0);
+  ability.set('h_x_mult', num('h_x_mult', 0));
+  ability.set('hands_played_at_create', 0);
+  ability.set('type', typeof cfg.type === 'string' ? (cfg.type as string) : '');
+
+  const t = new LuaTable()
+    .set('save_fields', new LuaTable().set('center', def.key))
+    .set('label', def.enName)
+    .set('rank', rank)
+    .set('sort_id', sortId)
+    .set('facing', 'front')
+    .set('sprite_facing', 'front')
+    .set('base', new LuaTable()
+      .set('nominal', 0).set('suit_nominal', 0).set('face_nominal', 0).set('times_played', 0))
+    .set('ability', ability)
+    .set('base_cost', def.cost)
+    .set('cost', def.cost)
+    .set('extra_cost', 0)
+    .set('sell_cost', Math.floor(def.cost / 2))
+    .set('added_to_deck', true)
+    .set('debuff', false)
+    .set('bypass_discovery_center', true)
+    .set('bypass_discovery_ui', true)
+    .set('bypass_lock', true)
+    .set('params', new LuaTable()
+      .set('discover', true)
+      .set('bypass_discovery_center', true)
+      // bypass_back = 目标牌组 pos；样例键序 y 在 x 前（与模板 BACK.pos 一致）
+      .set('bypass_back', new LuaTable().set('y', deck.pos.y).set('x', deck.pos.x)));
+  const ed = buildEdition('negative', { allowNegative: true });
+  if (negative && ed) t.set('edition', ed);
+  return t;
+}
+
+/**
+ * 把开局消耗牌写进 consumeables 区：cards 替换、card_count 同步；
+ * card_limit/temp_limit = 槽位数，由 applyRunInit 落盘（魔法牌组的水晶球券 +1
+ * 在游戏读档 redeem used_vouchers 时补上，见下）。sort_id 从全存档最大值续接。
+ */
+export function applyConsumablesToSave(root: LuaTable, deck: BackDef, spec: ConsumablesSpec): void {
+  const area = (root.get('cardAreas') as LuaTable).get('consumeables') as LuaTable;
+  let sortId = maxSortId(root);
+  const list = new LuaTable();
+  spec.items.forEach((item, i) => {
+    const def = consumableByKey(item.key);
+    if (!def) throw new Error(`未知消耗牌: ${item.key}`);
+    list.set(i + 1, buildConsumableCard(def, deck, i + 1, ++sortId, item.negative));
+  });
+  area.set('cards', list);
+  const cfg = area.get('config') as LuaTable;
+  cfg.set('card_count', spec.items.length);
+
+  // 负片每张使消耗区上限 +1（card.lua:405-417 set_edition：added_to_deck 的负片消耗牌
+  // 令 card_limit +1）。存档必须直接写 +1 后的值——读档不走 set_edition。
+  // 例：2 槽 + 1 张负片 → card_limit = 3，游戏 HUD 显示 1/3（card_count/card_limit）。
+  // temp_limit = max(张数, card_limit)（cardarea.lua:266 的稳态），无负片时同样同步
+  const negCount = spec.items.filter(it => it.negative).length;
+  cfg.set('card_limit', (cfg.get('card_limit') as number) + negCount);
+  cfg.set('temp_limit', Math.max(spec.items.length, cfg.get('card_limit') as number));
+
+  // 魔法牌组自带水晶球券（backs.ts apply_to_run → used_vouchers；真机样例一致）。
+  // 读档时游戏对 used_vouchers 逐个 redeem（水晶球 = 消耗区上限 +1），故
+  // starting_params.consumable_slots 保持面板值即可，勿在此提前加进 card_limit
+  if (deck.key === 'b_magic') {
+    const game = root.get('GAME') as LuaTable;
+    let uv = game.get('used_vouchers');
+    if (!(uv instanceof LuaTable)) {
+      uv = new LuaTable();
+      game.set('used_vouchers', uv);
+    }
+    uv.set('v_crystal_ball', true);
+  }
 }

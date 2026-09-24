@@ -33,6 +33,23 @@ export class LuaTable {
 
 // ---------- 解析 ----------
 
+/** 提取脚本/数据文件产出的 JSON 值 → LuaTable（数组转数字键 1..n，键序保持） */
+export function jsonToLua(v: unknown): LuaValue {
+  if (v === null || v === undefined) throw new Error('数据里不允许 null');
+  if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
+  if (Array.isArray(v)) {
+    const t = new LuaTable();
+    v.forEach((item, i) => t.set(i + 1, jsonToLua(item)));
+    return t;
+  }
+  if (typeof v === 'object') {
+    const t = new LuaTable();
+    for (const [k, item] of Object.entries(v)) t.set(k, jsonToLua(item));
+    return t;
+  }
+  throw new Error(`无法转换的数据类型: ${typeof v}`);
+}
+
 /** 深拷贝 Lua 表（键序保持；叶子值为数字/字符串/布尔，天然不可变） */
 export function cloneLuaTable(t: LuaTable): LuaTable {
   const out = new LuaTable();

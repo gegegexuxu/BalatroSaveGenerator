@@ -4,7 +4,7 @@ import { STAKES } from './data/stakes';
 import type { ConsumableDef } from './data/consumables';
 import { generateSave } from './core/generate';
 import { blankCard, defaultDeckCards, renumberDeck, type DeckCard } from './core/deckGen';
-import { deckDefaultConsumables, sameConsumables } from './core/consumables';
+import { deckDefaultConsumables, type ConsumableItem } from './core/consumables';
 import { createDeckSwitcher } from './ui/deckSwitcher';
 import { createStakeSwitcher } from './ui/stakeSwitcher';
 import { createRunParamsPanel, deckInit } from './ui/runParamsPanel';
@@ -63,9 +63,10 @@ let workingCards: DeckCard[] = [];
 let deckSource = currentDeck.key;
 /** 是否手工增删过牌面（重置后清零） */
 let deckEdited = false;
-// 工作消耗牌（键名数组）：随牌组切换按该牌组默认重建（魔法 = 愚者×2、幽灵 = 妖法×1，其余为空）。
-// v1 仅界面配置，暂不写入导出存档（PROJECT_SPEC.md 5.6 记录后续项）
-let workingConsumables: string[] = [];
+// 工作消耗牌（逐牌记录）：随牌组切换按该牌组默认重建（魔法 = 愚者×2、幽灵 = 妖法×1，其余为空）。
+// v2 起写入导出存档（PROJECT_SPEC.md 5.6）；负片是逐牌属性——加入时刻弹窗负片开关的状态
+let workingConsumables: ConsumableItem[] = [];
+let consumablesNegative = false;   // 负片开关当前状态（弹窗内切换；不随弹窗开关重置）
 const runParams = createRunParamsPanel(deckInit(selectable[0], 1));
 const cardDetail = createCardDetailModal();
 const deckEditor = createDeckEditorModal({
@@ -79,32 +80,30 @@ const deckEditor = createDeckEditorModal({
     cardDetail.open({ card, mode: 'edit', onConfirm: handlers.onConfirm, onCreate: handlers.onCreate }),
   openCreateCard: handlers =>
     cardDetail.open({ card: blankCard(), mode: 'create', onCreate: handlers.onCreate }),
-  isStale: () => deckSource !== currentDeck.key || deckEdited,
 });
-// 消耗牌弹窗（图鉴）：槽位上限直接读参数面板的「消耗品」值，「重置」回到当前牌组默认
+// 消耗牌弹窗（图鉴）：点牌即选入工作列表并自动关闭（带不带负片看加入时刻的开关状态）
 const consumables = createConsumablesModal({
   capacity: () => runParams.values().consumableSlots,
+  negative: () => consumablesNegative,
   imageUrl: consumableUrl,
-  onChange: setConsumables,
-  onReset: () => {
-    rebuildConsumables();
-    return workingConsumables;
+  onToggleNegative: () => {
+    consumablesNegative = !consumablesNegative;
+    consumables.open(workingConsumables);   // 重开本弹窗：按钮文案与牌池预览跟随开关
   },
-  isStale: () => !sameConsumables(workingConsumables, deckDefaultConsumables(currentDeck)),
+  onPick: key => setConsumables([...workingConsumables, { key, negative: consumablesNegative }]),
 });
-// 消耗牌入口：挂在参数面板下方（同属右侧参数列）
+// 消耗牌入口：挂在左列（牌组 + 赌注）下方，宽度与它们对齐，牌面可以放得更大
 const consumablesEntry = createConsumablesEntry({
   capacity: () => runParams.values().consumableSlots,
   imageUrl: consumableUrl,
-  onOpen: () => consumables.open(workingConsumables, currentDeck),
+  onOpen: () => consumables.open(workingConsumables),
   onRemove: index => {
-    const keys = [...workingConsumables];
-    keys.splice(index, 1);
-    setConsumables(keys);
+    const items = [...workingConsumables];
+    items.splice(index, 1);
+    setConsumables(items);
   },
 });
-runParams.root.appendChild(consumablesEntry.root);
-// 槽位数可手改：面板里数值一变就重绘入口（空槽数量、N / M 计数都要跟着变）。
+// 槽位数可手改：面板里数值一变就重绘入口（N / M 计数与按钮禁用状态都要跟着变）。
 // input 与 change 都听：边打字边反映，失焦提交时再兜一次
 for (const type of ['input', 'change'] as const) {
   runParams.root.addEventListener(type, () => consumablesEntry.render(workingConsumables));
@@ -115,7 +114,7 @@ const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
   rebuildConsumables();   // 消耗牌是牌组派生状态，与参数面板一起随牌组切换
   // 牌堆保持原样（不自动按新牌组重建）；弹窗开着时只同步牌组名与描述
   if (deckEditor.isOpen()) deckEditor.open(def, workingCards);
-  if (consumables.isOpen()) consumables.open(workingConsumables, def);
+  if (consumables.isOpen()) consumables.open(workingConsumables);
 }, () => deckEditor.open(currentDeck, workingCards));
 
 /** 按当前牌组与种子重建默认牌堆（含古怪牌组的种子随机与开局洗牌） */
@@ -128,14 +127,14 @@ function rebuildDeck(): void {
 rebuildDeck();
 
 /** 消耗牌列表的唯一写入口：同步工作状态与入口展示（弹窗持有自己的副本，关闭后以这里为准） */
-function setConsumables(keys: string[]): void {
-  workingConsumables = keys;
+function setConsumables(items: ConsumableItem[]): void {
+  workingConsumables = items;
   consumablesEntry.render(workingConsumables);
 }
 
 /** 按当前牌组的默认起始消耗牌重建列表（取自 backs.ts 的 config.consumables，见 core/consumables） */
 function rebuildConsumables(): void {
-  setConsumables(deckDefaultConsumables(currentDeck));
+  setConsumables(deckDefaultConsumables(currentDeck).map(key => ({ key, negative: false })));
 }
 rebuildConsumables();
 
@@ -178,7 +177,7 @@ app.append(
     header,
     actions,
     h('div', { class: 'switchers' }, [
-      h('div', { class: 'switchers-col' }, [deckSwitcher.root, stakeSwitcher.root]),
+      h('div', { class: 'switchers-col' }, [deckSwitcher.root, stakeSwitcher.root, consumablesEntry.root]),
       runParams.root,
     ]),
     footer,
@@ -193,7 +192,9 @@ app.append(
 // ---------- 交互 ----------
 function exportSave(): void {
   try {
-    const bytes = generateSave(currentDeck.key, currentStake, runParams.values(), workingCards);
+    const bytes = generateSave(currentDeck.key, currentStake, runParams.values(), workingCards, {
+      items: workingConsumables,
+    });
     const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -212,6 +213,13 @@ function exportSave(): void {
 
 exportBtn.addEventListener('click', exportSave);
 helpBtn.addEventListener('click', () => modal.open());
+
+// 全站屏蔽浏览器右键菜单：右键在卡牌上是「快速删除」，菜单弹出会打断操作。
+// 输入框内保留系统菜单（右键粘贴仍可用）
+document.addEventListener('contextmenu', e => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  e.preventDefault();
+});
 
 document.addEventListener('keydown', e => {
   if (modal.root.classList.contains('show')) return;

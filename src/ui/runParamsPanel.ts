@@ -53,7 +53,7 @@ export interface RunParamsPanel {
 export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
   const make = (key: keyof RunInit, cls: string): HTMLInputElement => {
     const [min, max] = LIMITS[key];
-    const input = h('input', { class: `param-input ${cls}`, title: `点击修改（${min}-${max}）` }) as HTMLInputElement;
+    const input = h('input', { class: `param-input ${cls}` }) as HTMLInputElement;
     input.type = 'number';
     input.inputMode = 'numeric';
     input.min = String(min);
@@ -77,7 +77,6 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
   let seed = randomSeed();
   const seedInput = h('input', {
     class: 'seed-input',
-    title: '游戏种子：8 位，不含 0 / I / O',
   }) as HTMLInputElement;
   seedInput.type = 'text';
   seedInput.maxLength = 8;
@@ -103,17 +102,17 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
         discardsInput,
       ]),
       h('div', { class: 'param-tile' }, [
-        h('span', { class: 'param-label', text: '手牌', title: '每回合手牌上限（默认 8，彩绘牌组 +2）' }),
+        h('span', { class: 'param-label', text: '手牌' }),
         handSizeInput,
       ]),
     ]),
     h('div', { class: 'run-params-row' }, [
       h('div', { class: 'param-tile' }, [
-        h('span', { class: 'param-label', text: '小丑', title: '小丑牌槽位数（默认 5，黑色牌组 +1、彩绘牌组 -1）' }),
+        h('span', { class: 'param-label', text: '小丑' }),
         jokerSlotsInput,
       ]),
       h('div', { class: 'param-tile' }, [
-        h('span', { class: 'param-label', text: '消耗品', title: '消耗品槽位数（默认 2，星云牌组 -1）' }),
+        h('span', { class: 'param-label', text: '消耗牌' }),
         consumableSlotsInput,
       ]),
     ]),

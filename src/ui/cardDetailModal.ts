@@ -155,13 +155,12 @@ export function createCardDetailModal(): CardDetailModal {
       edition: c.edition,
     }, { animate: true }));   // 详情弹窗只有一张牌：满帧动画（编辑器里 52 张用静态快照）
     rankVal.textContent = rankLabel(c.rank);
-    // 花色只显示图标（中文名放 alt/title，不占版面）
+    // 花色只显示图标（中文名放 alt，不占版面）
     const suitIconSrc = uiIcon(SUIT_ICON[c.suit]);
     const suitZh = SUIT_ZH[c.suit];
     suitVal.replaceChildren(
       ...(suitIconSrc ? [h('img', { class: 'cd-icon', src: suitIconSrc, alt: suitZh }) as HTMLImageElement] : [h('span', { text: suitZh })]),
     );
-    suitVal.title = suitZh;
     const enh = c.enhancement ? ENHANCEMENTS.find(e => e.key === c.enhancement) : undefined;
     const seal = c.seal ? SEALS.find(s => s.key === c.seal) : undefined;
     const edition = c.edition ? EDITIONS.find(e => e.key === c.edition) : undefined;

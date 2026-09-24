@@ -2,10 +2,10 @@
 // 字段映射与键序依据 PROJECT_SPEC.md 5.4 / 附录 B（模板 BACK 的键序：name, pos, effect, key）
 import { BACKS, type BackDef } from '../data/backs';
 import templateSource from '../data/templateSource';
-import { LuaTable, parseLua, serializeLua, type LuaValue } from './luaTable';
+import { LuaTable, parseLua, serializeLua, jsonToLua } from './luaTable';
 import { deflateSave } from './deflate';
 import { validateSave } from './validate';
-import { applyDeckToSave } from './saveDeck';
+import { applyConsumablesToSave, applyDeckToSave, type ConsumablesSpec } from './saveDeck';
 import type { DeckCard } from './deckGen';
 
 export const MIN_STAKE = 1;
@@ -36,23 +36,6 @@ export interface RunInitOverrides {
   consumableSlots?: number;
   dollars: number;
   seed?: string;
-}
-
-/** 提取脚本产出的 JSON 值 → LuaTable（数组转数字键 1..n） */
-function jsonToLua(v: unknown): LuaValue {
-  if (v === null || v === undefined) throw new Error('数据里不允许 null');
-  if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
-  if (Array.isArray(v)) {
-    const t = new LuaTable();
-    v.forEach((item, i) => t.set(i + 1, jsonToLua(item)));
-    return t;
-  }
-  if (typeof v === 'object') {
-    const t = new LuaTable();
-    for (const [k, item] of Object.entries(v)) t.set(k, jsonToLua(item));
-    return t;
-  }
-  throw new Error(`无法转换的数据类型: ${typeof v}`);
 }
 
 /** 用牌组定义重建 BACK 块（键序与模板逐字节对齐，b_red 可还原无损一致） */
@@ -185,12 +168,14 @@ function applySeed(root: LuaTable, seed: string): void {
 
 /** 生成指定牌组与赌注（1-8，白注~金注）的开局 save.jkr 字节流。
  *  cards 为目标牌堆（牌堆顺序，见 core/deckGen）：传入时替换存档牌堆，
- *  省略则沿用模板牌堆（模板虽是合法红牌组，但牌序来自别的种子） */
+ *  省略则沿用模板牌堆（模板虽是合法红牌组，但牌序来自别的种子）；
+ *  consumables 为开局消耗牌（items = 区内顺序，每张自带负片标记），空列表跳过 */
 export function generateSave(
   deckKey: string,
   stake: number = 1,
   init?: RunInitOverrides,
   cards?: DeckCard[],
+  consumables?: ConsumablesSpec,
 ): Uint8Array {
   const def = BACKS.find(b => b.key === deckKey && !b.omit);
   if (!def) throw new Error(`未知或不可选的牌组: ${deckKey}`);
@@ -211,6 +196,7 @@ export function generateSave(
     if (init.seed !== undefined) applySeed(root, init.seed);
   }
   if (cards) applyDeckToSave(root, cards);
+  if (consumables && consumables.items.length > 0) applyConsumablesToSave(root, def, consumables);
 
   validateSave(root);
   return deflateSave(serializeLua(root));

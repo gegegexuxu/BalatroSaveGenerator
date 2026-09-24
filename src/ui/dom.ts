@@ -3,7 +3,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Partial<{
     class: string; text: string; html: string; src: string; alt: string;
-    title: string; 'aria-label': string; 'aria-live': string;
+    'aria-label': string; 'aria-live': string;
   }> = {},
   children: HTMLElement[] = [],
 ): HTMLElementTagNameMap[K] {
@@ -13,7 +13,6 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   if (attrs.html !== undefined) el.innerHTML = attrs.html;
   if (attrs.src) el.setAttribute('src', attrs.src);
   if (attrs.alt) el.setAttribute('alt', attrs.alt);
-  if (attrs.title) el.setAttribute('title', attrs.title);
   if (attrs['aria-label']) el.setAttribute('aria-label', attrs['aria-label']);
   if (attrs['aria-live']) el.setAttribute('aria-live', attrs['aria-live']);
   for (const c of children) el.appendChild(c);

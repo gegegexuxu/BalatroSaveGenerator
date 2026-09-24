@@ -67,15 +67,54 @@ export function validateSave(root: LuaTable): void {
     }
   }
 
-  // 槽位数（v1.1）：starting_params 与对应牌区容量必须同步（读档时游戏不再从 starting_params 派生）
+  // 槽位数（v1.1）：starting_params 与对应牌区容量必须同步（读档时游戏不再从 starting_params 派生）。
+  // consumeables 例外：负片每张使 card_limit +1（card.lua:405-417），单列断言
   const sp = g.get('starting_params') as LuaTable;
-  const slotPairs: [string, string][] = [['jokers', 'joker_slots'], ['consumeables', 'consumable_slots']];
-  for (const [area, field] of slotPairs) {
-    const cfg = (areas.get(area) as LuaTable).get('config') as LuaTable;
-    const want = sp.get(field);
+  {
+    const cfg = (areas.get('jokers') as LuaTable).get('config') as LuaTable;
+    const want = sp.get('joker_slots');
     need(cfg.get('card_limit') === want && cfg.get('temp_limit') === want,
-      `${area} 区 card_limit/temp_limit(${cfg.get('card_limit')}/${cfg.get('temp_limit')}) 应与 starting_params.${field}(${want}) 一致`);
+      `jokers 区 card_limit/temp_limit(${cfg.get('card_limit')}/${cfg.get('temp_limit')}) 应与 starting_params.joker_slots(${want}) 一致`);
   }
+
+  // 消耗牌区（v2）：结构按附录 D，版本仅负片；card_limit = 槽位数 + 负片张数
+  const consArea = areas.get('consumeables') as LuaTable;
+  const consCards = consArea.get('cards') as LuaTable;
+  const consCfg = consArea.get('config') as LuaTable;
+  need(consCfg.get('card_count') === consCards.entries.size,
+    'consumeables.card_count 应等于实际张数');
+  let prevRank = 0;
+  let negativeCount = 0;
+  for (const [, node] of consCards.entries) {
+    const t = node as LuaTable;
+    const sf = t.get('save_fields');
+    need(sf instanceof LuaTable && typeof (sf as LuaTable).get('center') === 'string'
+      && String((sf as LuaTable).get('center')).startsWith('c_'),
+      '消耗牌 save_fields.center 应为 c_* key');
+    need(t.get('base_cost') === t.get('cost'), '消耗牌 base_cost 应等于 cost');
+    need(t.get('sell_cost') === Math.floor((t.get('cost') as number) / 2),
+      `消耗牌 sell_cost(${t.get('sell_cost')}) 应为 floor(cost/2)`);
+    need(t.get('added_to_deck') === true, '消耗牌 added_to_deck 应为 true');
+    const rank = t.get('rank');
+    need(rank === prevRank + 1, `消耗牌 rank 应连续 1..n（当前 ${rank}）`);
+    prevRank = rank as number;
+    const ed = t.get('edition');
+    if (ed !== undefined) {
+      need(ed instanceof LuaTable, '消耗牌 edition 应为表');
+      const et = ed as LuaTable;
+      need(et.get('negative') === true && et.get('type') === 'negative',
+        '消耗牌仅支持负片版本（edition 应为 negative/type）');
+      negativeCount++;
+    }
+  }
+  const consSlots = sp.get('consumable_slots') as number;
+  const consLimit = consCfg.get('card_limit') as number;
+  need(consLimit === consSlots + negativeCount,
+    `consumeables.card_limit(${consLimit}) 应为 槽位数(${consSlots}) + 负片张数(${negativeCount})`);
+  need(consCfg.get('temp_limit') === Math.max(consCards.entries.size, consLimit),
+    `consumeables.temp_limit(${consCfg.get('temp_limit')}) 应为 max(张数, card_limit)（cardarea.lua:266）`);
+  need(consCards.entries.size - negativeCount <= consSlots,
+    `非负片消耗牌张数(${consCards.entries.size - negativeCount}) 不应超过槽位数(${consSlots})`);
 
   const back = root.get('BACK') as LuaTable;
   need(back instanceof LuaTable && typeof back.get('name') === 'string' && back.get('name') !== '', 'BACK.name 不能为空（游戏按名称查牌组）');

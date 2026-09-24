@@ -32,8 +32,6 @@ export interface DeckEditorOptions {
   openCardDetail: (card: DeckCard, handlers: { onConfirm: () => void; onCreate: (draft: DeckCard) => void }) => void;
   /** 打开「创建卡牌」弹窗（只有取消 / 创建新的） */
   openCreateCard: (handlers: { onCreate: (draft: DeckCard) => void }) => void;
-  /** 工作牌堆是否与所选牌组不一致（不一致时提示需要重置） */
-  isStale?: () => boolean;
 }
 
 export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal {
@@ -81,7 +79,6 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
       .map(g => h('div', { class: 'deck-suit-row' },
         g.list.map(card => {
           const el = playingCard(card);
-          el.title = '左键查看 / 修改 · 右键删除';
           el.addEventListener('click', () => opts.openCardDetail(card, {
             onConfirm: () => applyEdit({ type: 'modify', card }),
             onCreate: draft => applyEdit({ type: 'create', card: draft }),
@@ -100,7 +97,6 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
     const cards = opts.onEdit(action);
     renderStats(cards);
     renderCards(cards);
-    syncResetHint();
   }
 
   /** 按行宽自适应排布：牌多时加大重叠，避免撑破牌区（最多 52 张同花色） */
@@ -119,25 +115,16 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
   });
 
   const resetBtn = h('button', { class: 'deck-editor-reset', text: '重置' });
-  /** 牌堆与所选牌组不一致时只改悬停文案（不做视觉高亮） */
-  function syncResetHint(): void {
-    const stale = opts.isStale?.() ?? false;
-    resetBtn.setAttribute('title', stale
-      ? '当前牌堆不是该牌组的默认牌堆，点击按当前牌组规则重建（古怪牌组按种子随机生成）'
-      : '恢复当前牌组的默认牌堆（古怪牌组按种子随机生成）');
-  }
   resetBtn.addEventListener('click', () => {
     const cards = opts.onReset();
     renderStats(cards);
     renderCards(cards);
-    syncResetHint();
   });
 
   const backBtn = h('button', { class: 'deck-editor-back', text: '保存' });
   backBtn.addEventListener('click', close);
 
   const createBtn = h('button', { class: 'deck-editor-create', text: '创建卡牌' });
-  createBtn.setAttribute('title', '新建一张牌（与牌面详情同样的选择方式，不影响已有牌）');
   createBtn.addEventListener('click', () => opts.openCreateCard({
     onCreate: draft => applyEdit({ type: 'create', card: draft }),
   }));
@@ -152,7 +139,7 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
 
   const panel = h('div', { class: 'deck-editor' }, [
     body,
-    h('div', { class: 'deck-editor-hint', text: '悬浮高亮 · 左键查看/修改 · 右键删除 · 也可点「创建卡牌」新增' }),
+    h('div', { class: 'deck-editor-hint', text: '左键卡牌查看详情，右键卡牌快速删除' }),
     actions,
   ]);
 
@@ -168,7 +155,6 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
       descEl.innerHTML = def.text.filter(l => l !== '').map(l => `<p>${renderDescLine(l, def.vars)}</p>`).join('');
       renderStats(cards);
       renderCards(cards);
-      syncResetHint();
       overlay.classList.add('show');
       applyRowFit();   // 显示后再量行宽：隐藏状态下 clientWidth 为 0
     },

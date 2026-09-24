@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { CONSUMABLES, type ConsumableSet } from '../src/data/consumables';
 import { BACKS } from '../src/data/backs';
 import {
-  canAddConsumable, consumableByKey, deckDefaultConsumables, listConsumables, SET_LABELS, SET_ORDER, sameConsumables,
+  canAddConsumable, consumableByKey, deckDefaultConsumables, listConsumables, SET_LABELS, SET_ORDER,
 } from '../src/core/consumables';
 
 const assetPath = (rel: string): string => fileURLToPath(new URL(`../assets/${rel}`, import.meta.url));
@@ -76,9 +76,8 @@ describe('消耗牌数据（提取自 game.lua / zh_CN.lua）', () => {
 });
 
 describe('牌池查询与牌组默认', () => {
-  it('listConsumables：值为 all 时含全域 52 张，分类筛选按塔罗 → 星球 → 幻灵的牌池顺序', () => {
-    expect(listConsumables('all')).toHaveLength(52);
-    expect(listConsumables('all').slice(0, 22).every(c => c.set === 'Tarot')).toBe(true);
+  it('listConsumables：按分类取牌池，数量塔罗 22 / 星球 12 / 幻灵 18', () => {
+    expect(listConsumables('Tarot')).toHaveLength(22);
     expect(listConsumables('Planet')).toHaveLength(12);
     expect(listConsumables('Spectral')).toHaveLength(18);
   });
@@ -100,12 +99,5 @@ describe('牌池查询与牌组默认', () => {
     expect(canAddConsumable(0, 0)).toBe(false);
     expect(canAddConsumable(1, 2)).toBe(true);
     expect(canAddConsumable(2, 2)).toBe(false);
-  });
-
-  it('sameConsumables：按计数比较，与顺序无关', () => {
-    expect(sameConsumables(['c_fool', 'c_fool'], ['c_fool', 'c_fool'])).toBe(true);
-    expect(sameConsumables(['c_fool', 'c_hex'], ['c_hex', 'c_fool'])).toBe(true);
-    expect(sameConsumables(['c_fool'], ['c_fool', 'c_fool'])).toBe(false);
-    expect(sameConsumables(['c_hex'], ['c_fool'])).toBe(false);
   });
 });

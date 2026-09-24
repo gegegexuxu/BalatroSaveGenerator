@@ -13,13 +13,9 @@ export const SET_LABELS: Record<ConsumableSet, string> = {
   Spectral: '幻灵牌',
 };
 
-/** 分类筛选值：'all' = 不筛选 */
-export type SetFilter = ConsumableSet | 'all';
-
-/** 按分类取牌池（保持游戏 order 顺序；'all' 时塔罗 → 星球 → 幻灵） */
-export function listConsumables(filter: SetFilter): ConsumableDef[] {
-  if (filter === 'all') return SET_ORDER.flatMap(set => filterBySet(set));
-  return filterBySet(filter);
+/** 按分类取牌池（保持游戏 order 顺序） */
+export function listConsumables(set: ConsumableSet): ConsumableDef[] {
+  return filterBySet(set);
 }
 
 function filterBySet(set: ConsumableSet): ConsumableDef[] {
@@ -44,20 +40,13 @@ export function deckDefaultConsumables(def: BackDef): string[] {
     .filter((key): key is string => typeof key === 'string' && consumableByKey(key) !== undefined);
 }
 
-/** 槽位硬上限判断：已达上限时不能再添加（上限 = 参数面板的「消耗品」槽位数） */
-export function canAddConsumable(count: number, capacity: number): boolean {
-  return count < capacity;
+/** 工作列表里的一张消耗牌：key = 中心 key；negative = 加入时负片开关是否开着（写档带负片 edition） */
+export interface ConsumableItem {
+  key: string;
+  negative: boolean;
 }
 
-/** 两个列表是否等价（按 key 计数比较，与顺序无关）：判断是否已偏离当前牌组的默认配置 */
-export function sameConsumables(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const count = new Map<string, number>();
-  for (const key of b) count.set(key, (count.get(key) ?? 0) + 1);
-  for (const key of a) {
-    const n = (count.get(key) ?? 0) - 1;
-    if (n < 0) return false;
-    count.set(key, n);
-  }
-  return true;
+/** 槽位硬上限判断：已达上限时不能再添加（上限 = 参数面板的「消耗牌」槽位数） */
+export function canAddConsumable(count: number, capacity: number): boolean {
+  return count < capacity;
 }
