@@ -23,10 +23,16 @@ export function randomSeed(): string {
   return seed;
 }
 
-/** 开局数值覆盖（出牌次数 / 弃牌次数 / 金币 / 种子），由界面参数面板传入 */
+/** 开局数值覆盖（出牌次数 / 弃牌次数 / 手牌上限 / 小丑槽 / 消耗品槽 / 金币 / 种子），由界面参数面板传入 */
 export interface RunInitOverrides {
   hands: number;
   discards: number;
+  /** 每回合手牌上限（省略时沿用模板值 8） */
+  handSize?: number;
+  /** 小丑牌槽位数（省略时沿用模板值 5） */
+  jokerSlots?: number;
+  /** 消耗品槽位数（省略时沿用模板值 2） */
+  consumableSlots?: number;
   dollars: number;
   seed?: string;
 }
@@ -123,6 +129,28 @@ function applyRunInit(root: LuaTable, init: RunInitOverrides): void {
   cr.set('discards_left', init.discards);
   sp.set('dollars', init.dollars);
   game.set('dollars', init.dollars);
+  if (init.handSize !== undefined) {
+    // 手牌上限只落在 starting_params（round_resets/current_round 无此字段）与手牌区容量上；
+    // 实际抓牌数取手牌区 card_limit（state_events.lua:362），故两处都要写
+    sp.set('hand_size', init.handSize);
+    const handCfg = ((root.get('cardAreas') as LuaTable).get('hand') as LuaTable).get('config') as LuaTable;
+    handCfg.set('card_limit', init.handSize);
+    handCfg.set('temp_limit', init.handSize);
+  }
+  // 槽位数与手牌上限同理：开局由 game.lua:2239-2245 从 starting_params 派生进牌区 config，
+  // 读档时该段不执行（G.GAME 整表替换），因此 starting_params 与牌区容量必须同时落盘
+  if (init.jokerSlots !== undefined) {
+    sp.set('joker_slots', init.jokerSlots);
+    const jokerCfg = ((root.get('cardAreas') as LuaTable).get('jokers') as LuaTable).get('config') as LuaTable;
+    jokerCfg.set('card_limit', init.jokerSlots);
+    jokerCfg.set('temp_limit', init.jokerSlots);
+  }
+  if (init.consumableSlots !== undefined) {
+    sp.set('consumable_slots', init.consumableSlots);
+    const consCfg = ((root.get('cardAreas') as LuaTable).get('consumeables') as LuaTable).get('config') as LuaTable;
+    consCfg.set('card_limit', init.consumableSlots);
+    consCfg.set('temp_limit', init.consumableSlots);
+  }
 }
 
 function needInt(v: number, name: string, min: number, max: number): void {
@@ -135,6 +163,9 @@ function validateRunInit(init: RunInitOverrides): void {
   needInt(init.hands, '出牌次数', 1, 99);
   needInt(init.discards, '弃牌次数', 0, 99);
   needInt(init.dollars, '金币', 0, 999999);
+  if (init.handSize !== undefined) needInt(init.handSize, '手牌上限', 1, 99);
+  if (init.jokerSlots !== undefined) needInt(init.jokerSlots, '小丑槽位', 1, 99);
+  if (init.consumableSlots !== undefined) needInt(init.consumableSlots, '消耗品槽位', 0, 99);
   if (init.seed !== undefined && !SEED_RE.test(init.seed)) {
     throw new Error(`种子格式错误（8 位，字符不含 0/I/O）: ${init.seed}`);
   }

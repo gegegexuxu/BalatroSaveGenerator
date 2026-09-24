@@ -1,4 +1,4 @@
-// 开局参数面板：出牌 / 弃牌 / 金币（样式复刻游戏对局 HUD 左上角三块）+ 种子（框体下方）
+// 开局参数面板：种子条（框体上方）+ 出牌 / 弃牌 / 手牌 / 金币（样式复刻游戏对局 HUD 左上角三块）
 // 随牌组刷新为真实初始值；数值与种子可手动修改，导出时写入存档
 import type { BackDef } from '../data/backs';
 import { randomSeed } from '../core/generate';
@@ -7,11 +7,15 @@ import { h } from './dom';
 export interface RunInit {
   hands: number;
   discards: number;
+  handSize: number;
+  jokerSlots: number;
+  consumableSlots: number;
   dollars: number;
 }
 
-/** 无修正基准（game.lua start_run）：4 次出牌、3 次弃牌、$4 */
-const BASE: RunInit = { hands: 4, discards: 3, dollars: 4 };
+/** 无修正基准（misc_functions.lua:1868 get_starting_params）：
+ *  4 出牌 / 3 弃牌 / 手牌上限 8 / 5 小丑槽 / 2 消耗品槽 / $4 */
+const BASE: RunInit = { hands: 4, discards: 3, handSize: 8, jokerSlots: 5, consumableSlots: 2, dollars: 4 };
 
 /** 牌组的真实开局数值（含蓝注起全局 -1 弃牌） */
 export function deckInit(def: BackDef, stake: number): RunInit {
@@ -20,6 +24,9 @@ export function deckInit(def: BackDef, stake: number): RunInit {
   return {
     hands: BASE.hands + num('hands'),
     discards: BASE.discards + num('discards') - (stake >= 5 ? 1 : 0),
+    handSize: BASE.handSize + num('hand_size'),
+    jokerSlots: BASE.jokerSlots + num('joker_slot'),
+    consumableSlots: BASE.consumableSlots + num('consumable_slot'),
     dollars: BASE.dollars + num('dollars'),
   };
 }
@@ -27,6 +34,9 @@ export function deckInit(def: BackDef, stake: number): RunInit {
 const LIMITS: Record<keyof RunInit, [number, number]> = {
   hands: [1, 99],
   discards: [0, 99],
+  handSize: [1, 99],
+  jokerSlots: [1, 99],       // 小丑槽为 0 时对局无法正常持有小丑，下限取 1
+  consumableSlots: [0, 99],
   dollars: [0, 999999],
 };
 
@@ -34,18 +44,22 @@ export interface RunParamsPanel {
   root: HTMLElement;
   /** 当前输入值（导出时传给 generateSave） */
   values(): RunInit & { seed: string };
-  /** 切换牌组/赌注后：重置数值为对应牌组的真实初始值（种子不受影响） */
+  /** 当前生效的种子（始终为合法值；输入框内未提交的非法内容不计入） */
+  seed(): string;
+  /** 切换牌组/赌注后：重置数值为对应牌组的真实初始值（种子与牌堆不受影响） */
   refresh(def: BackDef, stake: number): void;
 }
 
 export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
   const make = (key: keyof RunInit, cls: string): HTMLInputElement => {
-    const input = h('input', { class: `param-input ${cls}`, title: '点击修改' }) as HTMLInputElement;
+    const [min, max] = LIMITS[key];
+    const input = h('input', { class: `param-input ${cls}`, title: `点击修改（${min}-${max}）` }) as HTMLInputElement;
     input.type = 'number';
     input.inputMode = 'numeric';
+    input.min = String(min);
+    input.max = String(max);
     input.value = String(initial[key]);
     input.addEventListener('change', () => {
-      const [min, max] = LIMITS[key];
       const v = Math.round(Number(input.value));
       input.value = String(Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : initial[key]);
     });
@@ -54,6 +68,9 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
 
   const handsInput = make('hands', 'param-hands');
   const discardsInput = make('discards', 'param-discards');
+  const handSizeInput = make('handSize', 'param-handsize');
+  const jokerSlotsInput = make('jokerSlots', 'param-jokerslots');
+  const consumableSlotsInput = make('consumableSlots', 'param-consumableslots');
   const dollarsInput = make('dollars', 'param-money');
 
   // 种子：模仿游戏策略生成一个初始值，可编辑（8 位，字符表不含 0/I/O）
@@ -85,6 +102,20 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
         h('span', { class: 'param-label', text: '弃牌' }),
         discardsInput,
       ]),
+      h('div', { class: 'param-tile' }, [
+        h('span', { class: 'param-label', text: '手牌', title: '每回合手牌上限（默认 8，彩绘牌组 +2）' }),
+        handSizeInput,
+      ]),
+    ]),
+    h('div', { class: 'run-params-row' }, [
+      h('div', { class: 'param-tile' }, [
+        h('span', { class: 'param-label', text: '小丑', title: '小丑牌槽位数（默认 5，黑色牌组 +1、彩绘牌组 -1）' }),
+        jokerSlotsInput,
+      ]),
+      h('div', { class: 'param-tile' }, [
+        h('span', { class: 'param-label', text: '消耗品', title: '消耗品槽位数（默认 2，星云牌组 -1）' }),
+        consumableSlotsInput,
+      ]),
     ]),
     h('div', { class: 'param-tile param-tile-money' }, [
       h('span', { class: 'param-money-sign', text: '$' }),
@@ -95,20 +126,27 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
     h('span', { class: 'seed-label', text: '种子' }),
     seedInput,
   ]);
-  const root = h('div', { class: 'run-params-col' }, [panel, seedTile]);
+  const root = h('div', { class: 'run-params-col' }, [seedTile, panel]);
 
   return {
     root,
     values: () => ({
       hands: Number(handsInput.value),
       discards: Number(discardsInput.value),
+      handSize: Number(handSizeInput.value),
+      jokerSlots: Number(jokerSlotsInput.value),
+      consumableSlots: Number(consumableSlotsInput.value),
       dollars: Number(dollarsInput.value),
       seed: seedInput.value,
     }),
+    seed: () => seed,
     refresh(def, stake) {
       initial = deckInit(def, stake);
       handsInput.value = String(initial.hands);
       discardsInput.value = String(initial.discards);
+      handSizeInput.value = String(initial.handSize);
+      jokerSlotsInput.value = String(initial.jokerSlots);
+      consumableSlotsInput.value = String(initial.consumableSlots);
       dollarsInput.value = String(initial.dollars);
     },
   };

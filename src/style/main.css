@@ -331,12 +331,12 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 22px;
+  gap: 16px;
   flex: none;
   min-width: 0;
 }
 
-/* 开局参数面板（复刻游戏对局 HUD：出牌/弃牌/金币；外框与卡片同风格） */
+/* 开局参数面板（复刻游戏对局 HUD：出牌/弃牌/手牌/金币；外框与卡片同风格） */
 .run-params {
   display: flex;
   flex-direction: column;
@@ -351,11 +351,12 @@ body {
 }
 .run-params-row { display: flex; gap: 12px; }
 .param-tile {
+  flex: 1 1 0;              /* 等分面板宽度；输入框 min-width:0 后不会再撑爆布局 */
+  min-width: 0;
   background: var(--c-black);
   border: 2px solid var(--c-grey);
   border-radius: 8px;
-  padding: 6px 10px 7px;
-  width: 86px;              /* 固定宽：输入框的固有宽度会撑爆弹性布局 */
+  padding: 6px 8px 7px;      /* 左右各 8px：给输入框留出两位数（最大 99）的完整宽度 */
   box-shadow: 0 4px 0 rgba(0, 0, 0, .3),
               inset 0 2px 0 rgba(255, 255, 255, .07);
 }
@@ -390,6 +391,9 @@ body {
 .param-input { appearance: textfield; -moz-appearance: textfield; }
 .param-hands { color: var(--c-blue); }
 .param-discards { color: var(--c-red); }
+.param-handsize { color: var(--c-orange); }
+.param-jokerslots { color: var(--c-joker-grey); }
+.param-consumableslots { color: var(--set-tarot); }
 .param-tile-money {
   display: flex;
   align-items: baseline;
@@ -401,7 +405,7 @@ body {
 .param-money-sign { font-size: 24px; font-weight: 700; color: var(--c-money); }
 .param-money { color: var(--c-money); width: 5.2em; text-align: left; }   /* 限宽使 $+数字成组居中 */
 
-/* 种子（框体下方，游戏伪随机种子：8 位，不含 0/I/O） */
+/* 种子（参数框上方，游戏伪随机种子：8 位，不含 0/I/O） */
 .run-params-col {
   display: flex;
   flex-direction: column;
