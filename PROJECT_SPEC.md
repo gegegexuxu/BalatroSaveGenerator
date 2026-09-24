@@ -23,7 +23,8 @@
 |---|---|
 | 解析/修改已有存档 | 本项目**只生成**，不读取玩家现有 `save.jkr`（v2 及以后再议） |
 | 修改 meta.jkr / profile.jkr | 解锁、图鉴、统计都在这两个文件里，与运行存档无关，**一律不碰** |
-| Shader 效果 | 游戏的漩涡背景、闪光、溶解等 shader 全部不做，用纯色替代 |
+| Shader 效果（场景级） | 漩涡背景、CRT、溶解/闪光动画等场景级 shader 不做，用纯色替代。**例外**：卡牌「版本」shader（闪箔/全息/多彩/负片）在范围内，见 §5.7；背景 CRT 质感覆盖层为**试用项**，见 §3.4 |
+| 顶点倾斜（鼠标 3D 视差） | 卡牌随光标向观者弹出的顶点 shader（`mouse_screen_pos`/`hovering`/`screen_scale`）**已定案不做，后续也不再做**——网页不做任何鼠标驱动的牌面视差 |
 | 粒子效果 | 不做 |
 | 音效/音乐 | 不做 |
 | 游戏内逻辑模拟 | 只生成"开局状态"存档，不在网页里模拟任何游戏进程 |
@@ -210,6 +211,18 @@ body { font-family: 'm6x11', 'Noto Sans SC', monospace; }
 - 悬停态：叠加 `--ui-hover`；
 - 排布参考游戏牌组选择页：横向滚动网格。
 
+**牌组编辑弹窗（牌面网格）**
+
+- 侧栏两列（宽度 223px，弹窗总宽锁定 1024px）：左列 = 牌组名 / 描述 / 基础卡牌（139px = 原 114px + 25；基础卡牌 Ace 独占首行、其余每行两个图标，行内 `space-evenly` 铺开）；右列 = 点数列（50px = 点数块 24 + 间距 6 + 数字位，竖排每行一条 A→2，13 行，点数块与张数紧邻左对齐、每行对齐同一列）。省下的宽度全部让给牌面区（751px），右缘与弹窗内缘贴齐。两列内容均在侧栏高度内铺满：基础卡牌面板 `flex:1` 由四行图标 `space-evenly` 撑开、点数列 13 行 `space-between` 拉伸，框体不留空隙；窄屏（≤720px）隐藏点数列。
+- 「基础卡牌」统计与扑克详情的花色值改用游戏 UI 图标（`ui/icons.ts` 映射到 `assets/ui/ui_*.png`），不再用 `A/K/#/♠♥♣♦` 文字占位；图标为深色像素图，一律衬 `--c-joker-grey` 浅底。
+- 牌面渲染统一走 `ui/playingCard.ts`：**两层图叠加** —— 底板（无增强 = `assets/enhancement/Normal.png` 空白牌底板，有增强 = 对应增强底板）+ 牌面（`assets/cards/<suit>_<rank>.png`），蜡封再叠一层（同尺寸整张）。`.pcard` 不再自绘白底/描边/圆角，观感完全来自底板图。
+- 行内步进按行宽自适应：`step = clamp((行宽 - 牌宽) / (张数 - 1), 10px, 46px)`（`deckEditorModal.ts:applyRowFit`），牌多时重叠加大，不撑破牌区；窗口缩放时重算，极窄窗口退化为牌区横向滚动。
+- 悬停：抬高 `z-index: 1` 并加 2px `--c-orange` 外框（否则会被右侧叠压的牌盖住），`cursor: pointer`。
+- 左键单击 = 打开扑克详情弹窗；右键单击 = 删除该张（`contextmenu` 阻止浏览器菜单）；编辑后统计、牌区张数、`playing_card/sort_id`（按新顺序重编 1..n）即时更新。
+- 扑克详情弹窗（`.card-detail`，叠在牌组编辑弹窗之上）：中间放大展示牌面（`--card-w: 216px / --card-h: 312px`），左右各五组切换箭头 —— 点数 / 花色 / 增强 / 蜡封 / 版本；每行「组名 · ◀ · 牌面 · ▶ · 当前值」用 CSS Grid 排列（牌面单元格 `grid-row: 1 / span 5`）。五组箭头语义：点数按**升序**循环（2→3→…→A），右箭头 = 增大（展示用的 `RANK_ORDER` 是递减序，不能直接拿来循环）；花色按 ♠♥♣♦；增强/蜡封首位为「无」。弹窗内编辑的是**副本**（`draft = { ...card }`），箭头只改副本并即时预览，三种出口：**「确定」（红 `--c-red`，仅 edit 模式）= 写回被点的那张牌**（保持对象引用不变，牌组编辑器据此重绘统计与牌面）、**「创建新的」（橙 `--c-orange`）= 按当前草稿追加一张新牌，原牌不动**、**「取消」（蓝 `--c-blue`）/点遮罩关闭 = 丢弃改动**。当前值槽的配色与游戏统一：**增强 / 蜡封 / 版本**有值时按游戏配色填充色块（底色 = 物品色、文字纯白，对应游戏 `create_badge`，见 `UI_definitions.lua:1153`）——增强取 `G.C.SECONDARY_SET.Enhanced`（#8389dd）、蜡封取 `G.BADGE_COL.<key>_seal`（金 #eac058 / 红 #fe5f55 / 蓝 #009dff / 紫 #8867a5），二者游戏侧是静态常量；**版本取 `G.BADGE_COL`（四种统一为 `G.C.DARK_EDITION`），且该色在游戏里逐帧呼吸**——主循环每帧改写它（`game.lua:2500-2502`：`R = base+amp·sin(w·t)`、`B = base+amp·(1−sin)`、`G = min(R,B)`，周期 `2π/w ≈ 4.833s`），故页面用 CSS 动画复刻同一节奏（`#cc9999`（暖灰）→ `#9999cc`（中位）→ `#6666ff`（蓝）→ 往返），中位色同时作为 `prefers-reduced-motion` 下的静态回退。点数为牌面本身、花色为游戏图标，二者与「无」一并保持中性深色槽。配色与呼吸参数由 `scripts/extractData.mjs` 从 `globals.lua`、`UI_definitions.lua`、`game.lua` 提取/计算后写入 `src/data/cardMods.ts` 的 `colour` 与 `EDITION_PULSE`。
+- 牌组弹窗底部按钮：`重置`（红，按牌组规则重建）/ `创建卡牌`（蓝，以 `mode='create'` 打开同一弹窗且隐藏「确定」）/ `保存`（橙，关闭弹窗）。新建牌初值 = `blankCard()`（黑桃 A、无增强无蜡封无版本），追加到牌堆末尾后统一 `renumberDeck`。版本组五组箭头均为可用状态，切换即时预览（见 §5.7）。
+- 至少保留 1 张牌（0 张无法通过 `validateSave` 的「牌堆不能为空」）；工作牌堆与所选牌组不一致或手工增删过时，仅在「重置」按钮的悬停文案里说明（不做视觉高亮）。
+
 **页面背景**
 
 - 纯色 `--c-black`（#374244）。**不做**漩涡 shader、不做动态背景、不做粒子。
@@ -220,6 +233,8 @@ body { font-family: 'm6x11', 'Noto Sans SC', monospace; }
 - 按压：下移 2px + 阴影缩短，瞬时完成。
 - 选中：蓝色描边 + check 图标，不用复杂动画。
 - 过渡时长上限 150ms，`transition` 只允许 color/background/border-color/transform。
+- **弹窗入场动效**（三个弹窗统一）：面板自屏幕底部划入（`translateY(100vh)` → `0`，300ms，ease-out），用 `animation` 实现（遮罩由 `display:none` 切到 `flex`，`transition` 不会触发）；`prefers-reduced-motion: reduce` 下关闭。这是上一条 150ms 上限的**唯一例外**——行程为整屏高度，150ms 会呈现为瞬移。仅做入场，关闭仍是瞬时（不做退场动效）。
+- **背景 CRT 质感【试用中，未定案】**：页面纯色背景叠一层 CRT 纹理，只取 `CRT.fs` 在纯色下**真正可见**的三样——扫描线、边缘羽化暗角、极淡噪点（曲率/bulge 与 bloom 在纯色上不可见故不做；游戏侧 `glitch_intensity` 本就为 0）。实现为 `body::before`（`position: fixed` / `z-index: -1` / `pointer-events: none`，静态无动画），不参与 `body` 的 flex 布局、不挡交互、不影响页面高度；界面元素（面板/卡片/弹窗）不受影响。**评估不通过即回滚**：删除 `main.css` 中该段（`body::before`）即可，无其它代码依赖，同时删除本条并把 §1.3 的「场景级 shader 不做」恢复原状。
 
 ### 3.5 明确不做清单
 
@@ -244,6 +259,9 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 | `assets/fonts/NotoSansSC-Bold.ttf` | `Code/resources/fonts/` | 中文字体 | — |
 | `assets/ui/balatro.png` | `Resources/logo/` | 页面标题 logo | 666×432 |
 | `assets/ui/check.png` | `Resources/icon/` | 选中勾图标 | 132×132 |
+| `assets/ui/ui_*.png` | `Resources/ui_asset/` | 游戏 UI 小图标（`ui_{x}_{y}` = `ui_assets.png` 图集切片）：`{3,1}`黑桃 `{0,1}`红桃 `{2,1}`梅花 `{1,1}`方片、`{1,0}`A `{2,0}`人头牌 `{3,0}`数字牌（坐标语义依据 `UI_definitions.lua:3368-3378` 的 `tally_sprite`） | 36×36 PNG（2× 资源，18×18 逻辑像素；深色像素图，需衬浅色底） |
+| `assets/enhancement/` | `Resources/enhancement/` | 8 张增强牌底板 + `Normal.png`（**空白牌底板**，无增强时用） | 142×190 PNG（整张完整牌面底，直接铺在 `.pcard` 上，不另绘白底/描边） |
+| `assets/seal/` | `Resources/seal/` | 4 张蜡封（Red/Blue/Gold/Purple） | 142×190 PNG（**与牌面同尺寸、带透明留白**，按整张铺在牌面上即自动对齐，不要按裁剪图定位） |
 
 后续版本按需追加（`joker/` 152 张、`cards/` 52 张、`blind/`、`tag/`、`tarot/`、`planet/`、`spectral/`、`voucher/`、`enhancement/`、`seal/`、`sticker/` 均已在 `Resources/` 备好，规格见附录 A）。
 
@@ -343,6 +361,7 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 - 网页**不校验游戏内解锁状态**：Continue 路径（`button_callbacks.lua:196` 起）只做版本检查，锁定牌组的存档同样能进入。
 - 优惠券数值依据：水晶球=消耗品区上限+1（`card.lua:1912`）；库存过剩=`shop.joker_max+1`（`common_events.lua:1097`）；塔罗牌商人/星球牌商人=出现率 `4 × 9.6/4 = 9.6`（`card.lua:1890-1899`）；望远镜无存档字段效果。
 - 各区 `temp_limit` 与 `card_limit` 始终同步写（真机样例证实两值恒相等）。
+- **开局参数面板可覆盖**（v0.4 起，`ui/runParamsPanel.ts` → `generate.ts:applyRunInit`）：出牌（三处）、弃牌（三处）、**手牌上限**（`starting_params.hand_size` + `cardAreas.hand.config.card_limit/temp_limit` 两处；实际抓牌数取手牌区 `card_limit`，`state_events.lua:362`）、**小丑槽**（`starting_params.joker_slots` + `cardAreas.jokers.config.card_limit/temp_limit`）、**消耗品槽**（`starting_params.consumable_slots` + `cardAreas.consumeables.config.card_limit/temp_limit`；两区开局由 `game.lua:2239-2245` 从 `starting_params` 派生，读档时该段不执行，故必须同时落盘）、金币（`GAME.dollars` + `starting_params.dollars`）、种子（`pseudorandom.seed` 并清空其余流缓存）。面板默认值 = 标准基线 + 牌组修正（如彩绘牌组 `hand_size` 8→10、黑色牌组 `joker_slot` +1）。
 
 ### 5.5 牌对象数据字典（`core/playingCard.ts`）
 
@@ -356,7 +375,22 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 4. `rank` 按 1..n 写入（游戏加载时 `set_ranks()`，`cardarea.lua:214`，会按下标重算，写对只是为了存档可读）；外层 table 键 `[1..n]` 重排；
 5. **牌堆的物理顺序 = 存档 `cards` 数组顺序**（`CardArea:load` 顺序恢复，`align_cards` 不按 `sort_id` 重排），生成器直接以数组顺序表达洗牌结果；
 6. 方格牌组改花色后，`base.suit`、`base.colour`、`base.name`、`base.suit_nominal`、`save_fields.card`、`cardAreas.deck.config.card_limit/temp_limit`、`GAME.starting_deck_size` 必须一并更新（以目标花色牌的字典项为准做整体替换，而不是字段级修改）；
-7. 古怪牌组随机时逐张独立随机（52 次有放回抽样，与游戏 `pseudorandom_element` 语义一致）。
+7. 古怪牌组随机时逐张独立随机（52 次有放回抽样，与游戏 `pseudorandom_element` 语义一致）；
+8. **增强 / 蜡封**（扑克详情弹窗可改，定义见 `src/data/cardMods.ts`，提取自 `game.lua` 的 `P_CENTERS(m_*)` / `P_SEALS`）：
+   - 增强牌：`save_fields.center` = 增强 key（如 `m_glass`），`label` = `center.label`，`ability` 按 `card.lua:277-337 Card:set_ability` 重算 —— `name/effect/set` 取增强中心、`mult/h_mult/h_x_mult/h_dollars/p_dollars/t_mult/t_chips` 取 `config` 同名项、`x_mult` 取 `config.Xmult or 1`、`bonus` 取 `config.bonus or 0`、`extra` 取 `config.extra`、`order` 取中心 order，其余字段沿用基础牌（`base_cost/cost/sell_cost` 不变：增强中心无 `cost`）；
+   - 蜡封：新增 `seal` 字段（字符串 `Red/Blue/Gold/Purple`）写入 `Card:save` 的同名字段；`label`/`ability` 不受蜡封影响；
+   - 版本（闪箔 Foil / 全息 Holographic / 多彩 Polychrome / 负片 Negative）：定义见 `src/data/cardMods.ts` 的 `EDITIONS`（提取自 `game.lua` 的 `P_CENTERS(e_*)`）。**互斥单值**（`card.lua:387 Card:set_edition` 是 `elseif` 链），存档字段取自 `set_edition` + 中心 `config.extra`：
+     - `{foil = true, type = 'foil', chips = 50}`
+     - `{holo = true, type = 'holo', mult = 10}`
+     - `{polychrome = true, type = 'polychrome', x_mult = 1.5}`
+     - `{negative = true, type = 'negative'}`（**不**动 `jokers/consumeables.card_limit`：`set_edition` 的槽位 +1 只在 `added_to_deck`（局内获得）时发生，开局牌堆里的牌不触发）
+   - **扑克牌只开放 闪箔 / 镭射 / 多彩，不含负片**——依据（游戏逻辑，非美术取舍）：
+     - 给扑克牌加版本的两条路径都显式排除负片：`Aura` 幽灵牌（`card.lua:1195 poll_edition('aura', nil, true, true)`）与标准包（`card.lua:1761 poll_edition('standard_edition…', edition_rate, true)`），第 3 参 `_no_neg = true` 直接跳过 `negative` 分支（`common_events.lua:2055`）；能出负片的只有小丑/消耗品路径（`Ectoplasm`、`Negative Tag`、`Perkeo`、挑战预设）。
+     - 负片的唯一效果是「不占槽位」（`card.lua:687` jokers 分支 / `931` consumeables 分支），而扑克牌在牌堆里本就不占槽位——即便写进存档也无任何作用。
+     - 因此 `core/saveDeck.ts:buildEdition` 对扑克牌拒绝负片，`core/validate.ts` 同样断言拦截；详情弹窗的版本组也只在三者间循环。
+     - `ui/cardShader.ts` 仍保留 `negative` / `negative_shine` 两个 program：v2「起始小丑（含负片版本）」要用——负片在小丑上是合法且有意义的。
+   - 版本 shader 渲染（`ui/cardShader.ts`）：移植 `resources/shaders/{foil,holo,polychrome,negative,negative_shine}.fs`，用**单个共享 WebGL context** 渲染全部牌面（program 数不受限，context 数受限）。移植三条约定：① `dissolve = 0`（正常显示）时 `dissolve_mask()` 为恒等函数，解散/`burn_colour` 逻辑整段不移植；② 卡面是独立 PNG（非图集），令 `texture_details = (0, 0, W, H)`、`image_details = (W, H)`，则 shader 内 `uv = texture_coords`；③ 纹理不做 sRGB 转换（与游戏一致，直出 RGBA8）。
+   - 合成次序与游戏一致（`card.lua:4416-4472`）：闪箔/全息/多彩 = 底板 + 牌面各过一次同名 shader；负片 = 底板 + 牌面各过一次 `negative`，再对底板叠一次 `negative_shine`（后画故在最上层）。
 
 ### 5.6 消耗品卡对象（魔法/幽灵牌组专用）
 
@@ -376,6 +410,20 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 
 - 模板的 `pseudorandom` 计数器保留原值即可（不改动就没有一致性问题）；
 - 古怪牌组虽然在网页端随机牌面，但**不需要**动 `pseudorandom`：游戏加载存档时牌堆以 `cardAreas.deck.cards` 为准，RNG 只影响后续事件（`game.lua:2308` 起）。若后续版本提供 seed 自定义，规则是：改 `pseudorandom.seed` 并把**所有非 seed 键值清零**，游戏加载时会自动 `pseudohash` 重播种（`game.lua:2167-2168` 容错路径）。
+
+**现状（v0.5 起：牌堆按「牌组类型 + 种子」生成并写入存档）**：
+
+- seed 自定义已实现（`core/generate.ts:applySeed` 清零非 `seed` 键），牌堆随之重建。
+- **随机数复刻**（`core/luajitRandom.ts` + `core/balatroRng.ts`）：Balatro 用的是 LÖVE 内置 LuaJIT 的全局 `math.random`/`math.randomseed`（LÖVE 只额外提供 `love.math.*`，未替换全局 `math.*`），因此按 LuaJIT v2.1 源码逐位复刻：
+  - `lj_prng.c` TW223（四路 Tausworthe 异或，周期 2^223）；
+  - `lib_math.c:random_seed` —— 用**种子的 double 位模式**构造 4 个 64 位状态（依次 `d = d*π + e`，并补足 k[i] 的最高位），再预热 10 步；
+  - `math.random(n) = floor(d * n) + 1`，其中 `d` 由 `u64d` 的 `[1,2)` 位模式减 1 得到；
+  - `pseudohash`（逐字节 `((1.1239285023/num)*byte*π + π*i) % 1`）与 `pseudoseed`（`2.134453429141 + v*1.72431234` 递推 → `%.13f` 截断 → 与 `hashed_seed` 折半）；**每个 key 一条独立随机流**，首次使用时以 `pseudohash(key..seed)` 起步；
+  - `pseudorandom_element` 的候选表按 key 字符串序（花色 C<D<H<S，点数 2..9 < A < J < K < Q < T）；`pseudoshuffle` 先按 `sort_id` 归位再 Fisher–Yates。
+- **牌组组成**：普通牌组 52 张；废弃牌组按 `no_faces` 过滤人头牌 → 40 张；方格牌组梅花→黑桃、方块→红桃（26+26）；古怪牌组逐张 `pseudorandom_element(P_CARDS, pseudoseed('erratic'))` 抽 52 次（与游戏同源）。
+- **牌堆顺序**：复刻 `game.lua:2383 self.deck:shuffle()` —— 建牌序（按 `s..r` 字符串序）经 `pseudoshuffle(pseudoseed('shuffle'))` 洗牌，与真机同 seed 的开局牌堆顺序一致（牌堆顺序不影响玩法：进入回合时游戏会以 `pseudoseed('nr'..ante)` 重洗，`state_events.lua:344`）。
+- **校验向量**（均来自外部参考实现/实测数据，落在 `test/deckGen.test.ts`）：`random(1.0)=0.3238105623786367`；`pseudohash('erratic')=0.45752552206801056`；种子 `11153DRU` → K 17 张 / 方块 19 张；`8778L6US` → 红桃 39 张；`77XX2TEK` → 4 共 20 张 + 黑桃 38 张；坏种子 `7LB2WVPK`（`pseudohash` 溢出成 NaN → 随机流定死）→ 整副 52 张黑桃 10。
+- **「修改牌组」弹窗**：展示当前工作牌堆（按花色/点数分组统计），底部「重置」按钮按**当前牌组规则 + 当前种子**重建默认牌堆（古怪牌组按种子随机生成）。**切换牌组、修改种子都不会自动刷新牌堆**（避免覆盖已有牌堆）；工作牌堆与所选牌组不一致时「重置」按钮以悬停文案说明，导出提示同步标注「牌堆未重置」。牌面按行宽自适应重叠（见 §3.3），牌多时不撑破牌区。
 
 ### 5.8 版本与校验
 
@@ -401,10 +449,11 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 | 版本 | 内容 | 状态 |
 |---|---|---|
 | v1（MVP） | 15 种牌组选择（魔法/幽灵待消耗品样本）→ 生成并下载 `save.jkr` + 使用说明弹窗；**赌注选择（白注~金注）** | 进行中（牌组+赌注已实现，牌组规则数值未应用） |
-| v1.1 | 基础数值自定义：金钱、手牌数、弃牌数、手牌区大小、小丑/消耗品槽位；牌组规则落地（deckRules） | 规划 |
+| v1.1 | 基础数值自定义：金钱、手牌数、弃牌数、手牌区大小、小丑/消耗品槽位；牌组规则落地（deckRules） | 进行中（数值与牌组数值修正已实现；牌组非数值规则待补：星云/黄道起始优惠券、幽灵出现率、绿牌组无利息） |
+| v1.2 | **卡牌「版本」**（闪箔/全息/多彩/负片）：`edition` 存档字段 + 四个 shader 的 WebGL 移植（单共享 context）+ 详情弹窗预览 | 进行中 |
 | v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 规划（8 级赌注已实现） |
 | v3 | 进阶：牌型起始等级、优惠券、商店概率、逐张定制 52 张牌（强化/版本/印章）、起始底注 | 规划 |
-| 远期 | 解析已有存档、shader/动效增强（先修订规范再动工） | 不承诺 |
+| 远期 | 解析已有存档、场景级 shader/动效增强（背景漩涡、溶解动画等；卡牌版本 shader 已单列为 v1.2） | 不承诺 |
 
 每加一个自定义项，必须同步补充：`deckRules` 同风格的规则模块、validate 断言、快照测试、本规范第 5 章的字段映射表。
 
