@@ -4,8 +4,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)  # 仓库根（Web/）
 
 # 用法: python tools/analyze_save.py <解码后的 .lua 转储>
-# 默认指向仓库外工作区根的 save_dec.lua（个人转储，不入库）
-path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, '..', 'save_dec.lua')
+# 默认指向仓库外工作区的 Save/dec/save_dec.lua（个人转储，不入库）
+path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, '..', 'Save', 'dec', 'save_dec.lua')
 s = open(path, encoding='utf-8').read()
 
 def parse_table(s, pos):
