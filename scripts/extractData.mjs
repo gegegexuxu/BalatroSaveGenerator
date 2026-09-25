@@ -404,3 +404,255 @@ for (const set of CONSUMABLE_SETS) {
   console.log(`extracted ${list.length} ${set} consumables:`);
   for (const d of list) console.log(`  ${d.key} #${d.order} ${d.zhName} (${d.enName}) cost=${d.cost} pos=${d.pos.x},${d.pos.y} vars=[${d.vars.join(',')}]${d.hidden ? ' [hidden]' : ''}`);
 }
+
+// ---- 8. 提取小丑牌（P_CENTERS 的 j_*）→ src/data/jokers.ts ----
+// 与消耗牌同构（key/name/order/cost/pos/config/text/vars），差异：
+//   - 分组维度是稀有度 rarity 1-4（配色 globals.lua G.C.RARITY、页签名 zh_CN k_common/k_uncommon/k_rare/k_legendary）
+//   - 描述 #N# 的取值逐张实现在 card.lua 的 Joker UI 链里（generate_UI 内 self.ability.name == '英文名'
+//     逐条 loc_vars = {表达式,...}），此处把表达式静态求值到「开局状态」：
+//     无小丑、整副 52 张、概率基数 1（G.GAME.probabilities.normal）、动态倍率计数 0、X 倍率 1。
+//     求值不了的占位符记 null，对应描述行由 UI 过滤（同消耗牌的 hasAllVars 规则）。
+//   - 无 loc_vars 条目的小丑（Misprint/Blueprint 等）回退 config 顺序启发式。
+const cardLua = readFileSync(resolve(ROOT, 'Code/card.lua'), 'utf8');
+const suitSingular = {};
+for (const m of (extractBlock(zhLua, 'suits_singular') ?? '').matchAll(/(\w+)\s*=\s*"([^"]+)"/g)) suitSingular[m[1]] = m[2];
+
+const jokerRarityZh = { 1: '普通', 2: '罕见', 3: '稀有', 4: '传奇' };
+for (const [k, key] of [[1, 'k_common'], [2, 'k_uncommon'], [3, 'k_rare'], [4, 'k_legendary']]) {
+  const m = new RegExp(`${key}="([^"]+)"`).exec(zhLua);
+  if (m) jokerRarityZh[k] = m[1];
+}
+const rarityColourBlock = blockAfter(globalsLua, 'RARITY').replace(/--[^\n]*/g, '');   // 去行注释：旧色值被注释保留在行内
+const jokerRarityColour = {};
+[...rarityColourBlock.matchAll(/HEX\(\s*["']([0-9a-fA-F]{6,8})["']\s*\)/g)].forEach((m, i) => {
+  if (i < 4) jokerRarityColour[i + 1] = `#${m[1].slice(0, 6).toLowerCase()}`;
+});
+
+const jokerRaws = gameLua.split('\n')
+  .map(line => /^\s{8}(j_\w+)\s*=\s*\{.+\},?\s*$/.exec(line))
+  .filter(Boolean)
+  .map(m => [m[1], parseLuaLiteral(m[0].slice(m[0].indexOf('{')))])
+  .filter(([, def]) => def.set === 'Joker')
+  .map(([key, def]) => ({ key, def }));
+
+/** card.lua Joker UI 链：英文名 → loc_vars 表达式数组（字符串原样）。
+ *  语句形如 `elseif self.ability.name == 'A' or self.ability.name == 'B' then loc_vars = {…}`，
+ *  按相邻 name 出现位置切窗口：窗口内含 loc_vars 的是组内最后一名，向前收集 ` or ` 相连的同组名。 */
+function parseJokerLocVars() {
+  const chainStart = cardLua.indexOf("self.ability.set == 'Joker' then");
+  if (chainStart < 0) return new Map();
+  const chainEnd = cardLua.indexOf('\n        end\n        end', chainStart);
+  const region = cardLua.slice(chainStart, chainEnd > chainStart ? chainEnd : undefined);
+  const occs = [...region.matchAll(/self\.ability\.name == (["'])((?:[^'\\]|\\.)*)\1/g)]
+    .map(m => ({ name: m[2], start: m.index, end: m.index + m[0].length }));
+  const out = new Map();
+  for (let i = 0; i < occs.length; i++) {
+    const nextStart = i + 1 < occs.length ? occs[i + 1].start : region.length;
+    const window = region.slice(occs[i].start, nextStart);
+    const lm = /loc_vars\s*=\s*\{/.exec(window);
+    if (!lm) continue;   // 无取值的语句（Mime/Blueprint/Misprint 等走回退启发式）
+    const block = balancedFrom(window, window.indexOf('{', lm.index));
+    // 同组名：向前走，相邻间隔恰为 ` or ` 即同一条 elseif
+    const names = [occs[i].name];
+    for (let j = i - 1; j >= 0; j--) {
+      const gap = region.slice(occs[j].end, occs[j + 1].start);
+      if (!/^\s*or\s*$/.test(gap)) break;
+      names.push(occs[j].name);
+    }
+    // 顶层逗号切分，跳过 `key = …` 形态（如 colours = {...}），只留位置参数
+    const inner = block.slice(1, -1);
+    const exprs = [];
+    let depth = 0, cur = '';
+    for (let k = 0; k < inner.length; k++) {
+      const ch = inner[k];
+      if (ch === '"' || ch === "'") {   // 字符串原样吞掉（内部可能有逗号/括号）
+        const q = ch; cur += ch; k++;
+        while (k < inner.length && inner[k] !== q) { cur += inner[k]; k++; }
+        cur += inner[k] ?? '';
+      } else if (ch === '{' || ch === '(') { depth++; cur += ch; }
+      else if (ch === '}' || ch === ')') { depth--; cur += ch; }
+      else if (ch === ',' && depth === 0) { exprs.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    if (cur.trim()) exprs.push(cur);
+    for (const name of names) out.set(name, exprs.filter(x => !/^\w+\s*=/.test(x.trim())));
+  }
+  return out;
+}
+
+/** loc_vars 单个表达式 → 开局状态静态值；求值不了返回 undefined */
+function evalLocExpr(expr, def) {
+  const e = expr.trim();
+  const cfg = def.config ?? {};
+  const extra = cfg.extra;
+  const exVal = k => (extra && typeof extra === 'object' ? extra[k] : undefined);
+  let m;
+  if ((m = /^(["'])((?:[^\\]|\\.)*?)\1$/.exec(e))) return m[2];    // 字符串字面量
+  if (/G\.GAME\.probabilities\.normal/.test(e)) return 1;          // 概率基数开局为 1
+  if (/G\.GAME\.starting_deck_size/.test(e)) return 52;            // 开局整副 52 张
+  if (/G\.GAME\.dollars/.test(e)) return 0;                        // 开局 4 金币不足一个分隔档 → 0
+  if (/^math\.max\(\s*0\s*,/.test(e)) return 0;                    // max(0, 缺牌计数×…) 开局 0
+  if (/G\.GAME\.[\w.]+.*or\s*0\)?$/.test(e)) return 0;             // (G.GAME.x and G.GAME.x.y or 0) 开局 0
+  if (/^self\.ability\.\w+\s+or\s+'?\d+'?$/.test(e)) return 0;     // driver_tally or '0' 开局 0
+  // localize(动态表达式, 'poker_hands'/'suits_*')：先求值内层再查表
+  if ((m = /^localize\((.+),\s*'(poker_hands|suits_plural|suits_singular)'\)$/.exec(e))) {
+    const v = evalLocExpr(m[1], def);
+    if (typeof v !== 'string') return undefined;
+    if (m[2] === 'poker_hands') return handZh[v] ?? v;
+    if (m[2] === 'suits_plural') return suitZh[v] ?? v;
+    return suitSingular[v] ?? v;
+  }
+  if (/localize[\({]/.test(e)) return undefined;                   // 其余 localize 形态（动态回合牌等）
+  if ((m = /^-\s*self\.ability\.extra\.(\w+)$/.exec(e))) {
+    const v = exVal(m[1]);
+    return typeof v === 'number' ? -v : undefined;
+  }
+  if ((m = /^self\.ability\.extra\.(\w+)\s*\+\s*1$/.exec(e))) {
+    const v = exVal(m[1]);
+    return typeof v === 'number' ? v + 1 : undefined;
+  }
+  if ((m = /^self\.ability\.extra\.(\w+)$/.exec(e))) {
+    const v = exVal(m[1]);
+    if (typeof v === 'number') return v;
+    if (m[1] === 'suit') return typeof v === 'string' ? (suitSingular[v] ?? suitZh[v] ?? v) : undefined;
+    if (m[1] === 'type' || m[1] === 'poker_hand') return typeof v === 'string' ? (handZh[v] ?? v) : undefined;
+    return undefined;
+  }
+  if (/^self\.ability\.extra$/.test(e)) return typeof extra === 'number' ? extra : undefined;
+  if (/^self\.ability\.extra\s*\+\s*1$/.test(e)) return typeof extra === 'number' ? extra + 1 : undefined;
+  if (/^1\s*\+\s*self\.ability\.extra\b/.test(e)) return 1;        // 1 + extra×计数（开局 0）
+  if (/^self\.ability\.extra\s*\*/.test(e)) {
+    if (/or\s*52/.test(e)) return typeof extra === 'number' ? extra * 52 : undefined;   // Blue Joker：开局 52 张
+    return 0;                                                      // extra×计数（开局 0）
+  }
+  if (/\*\s*self\.ability\.extra$/.test(e)) return 0;              // 计数(0)×extra / planets_used×extra
+  if (/^self\.ability\.mult$/.test(e)) return 0;                   // 动态倍率计数：开局 0
+  if (/^self\.ability\.x_mult$/.test(e)) return 1;                 // 动态 X 倍率：开局 1
+  if (/^self\.ability\.type$/.test(e)) return typeof cfg.type === 'string' ? cfg.type : undefined;
+  // 存档构建器写死的创建期特例（card.lua:311-322 固定牌型），说明框取同一值
+  if (/^self\.ability\.to_do_poker_hand$/.test(e)) return handZh['High Card'] ?? 'High Card';
+  if ((m = /^self\.ability\.(t_mult|t_chips|h_size|d_size|h_mult|h_x_mult|p_dollars|h_dollars|bonus)$/.exec(e))) {
+    return typeof cfg[m[1]] === 'number' ? cfg[m[1]] : 0;
+  }
+  if (/^self\.ability\.\w+$/.test(e)) return 0;                    // 其余实例计数（tally/rounds…）开局 0
+  return undefined;
+}
+
+/** 无 loc_vars 条目时的回退：按 config 字段顺序猜测（概率基数 1 在最前） */
+function fallbackVars(def) {
+  const cfg = def.config ?? {};
+  const extra = cfg.extra;
+  const out = [];
+  if (extra && typeof extra === 'object' && extra.odds !== undefined) out.push(1);
+  for (const k of ['mult', 't_mult', 't_chips', 'h_size', 'd_size']) {
+    if (typeof cfg[k] === 'number') out.push(cfg[k]);
+  }
+  if (typeof extra === 'number') out.push(extra);
+  if (extra && typeof extra === 'object') {
+    for (const v of Object.values(extra)) {
+      if (typeof v === 'number') out.push(v);
+      else if (typeof v === 'string' && suitSingular[v]) out.push(suitSingular[v]);
+      else if (typeof v === 'string' && handZh[v]) out.push(handZh[v]);
+    }
+  }
+  return out;
+}
+
+const jokerLocVars = parseJokerLocVars();
+const jokerZhBlock = extractBlock(zhLua, 'Joker') ?? '';
+// 贴纸元数据：中文名（zh_CN labels 表）与徽章色（globals.lua G.C 的 ETERNAL/PERISHABLE/RENTAL）
+const jokerStickerZh = {};
+for (const m of (extractBlock(zhLua, 'labels') ?? '').matchAll(/\b(eternal|perishable|rental)\s*=\s*"([^"]+)"/g)) {
+  jokerStickerZh[m[1]] = m[2];
+}
+const jokerStickerColour = {
+  eternal: colourOf.ETERNAL, perishable: colourOf.PERISHABLE, rental: colourOf.RENTAL,
+};
+const jokerDefs = jokerRaws.map(({ key, def }) => {
+  const text = zhText(key, jokerZhBlock);
+  const parsed = jokerLocVars.get(def.name);
+  // 有解析结果 → 逐表达式求值；无（或语句无 loc_vars）→ config 顺序启发式直接给值
+  const evaluated = parsed ? parsed.map(x => evalLocExpr(x, def)) : fallbackVars(def);
+  const used = Math.max(0, ...[...text.join('').matchAll(/#(\d+)#/g)].map(m => Number(m[1])), 0);
+  // 位置参数：#N# → vars[N-1]；取不到的占位记 null（对应描述行不显示）
+  const vars = Array.from({ length: Math.max(used, evaluated.length) }, (_, i) =>
+    evaluated[i] === undefined ? null : evaluated[i]);
+  const missing = [];
+  for (let n = 1; n <= used; n++) if (vars[n - 1] === null) missing.push(`#${n}#`);
+  if (missing.length) console.warn(`  ! ${key} 不可静态取值: ${missing.join(' ')}`);
+  return {
+    key,
+    enName: def.name,
+    zhName: zhName(key, jokerZhBlock) ?? def.name,
+    rarity: def.rarity,
+    order: def.order,
+    cost: def.cost,
+    pos: def.pos,
+    /** 素材文件名（含空格，1:1 复制自 Resources/joker/）。
+     *  例外：j_drivers_license 的游戏资源名是 Driver.png（资源名 ≠ center 名） */
+    image: key === 'j_drivers_license' ? 'Driver.png' : `${def.name}.png`,
+    effect: def.effect,
+    config: def.config ?? {},
+    /** 贴纸兼容性（card.lua:506-519 set_eternal/set_perishable 的门控；缺省 = 兼容） */
+    eternal_compat: def.eternal_compat !== false,
+    perishable_compat: def.perishable_compat !== false,
+    text,
+    vars,
+    /** 稀有度色（G.C.RARITY：普通蓝 / 罕见绿 / 稀有红 / 传奇紫） */
+    colour: jokerRarityColour[def.rarity] ?? '#ffffff',
+  };
+}).sort((a, b) => a.order - b.order);
+
+const jokerBody = `export interface JokerDef {
+  key: string;
+  /** 英文名 = 素材文件名前缀（assets/joker/<enName>.png）= 存档 card.ability.name */
+  enName: string;
+  zhName: string;
+  /** 稀有度 1-4（普通/罕见/稀有/传奇），页签分组与存档无直接关系，图鉴展示用 */
+  rarity: number;
+  order: number;
+  /** 售价；开局持有实例的 sell_cost = floor(cost / 2) */
+  cost: number;
+  /** Jokers.png 图集坐标（10 列，格 142×190） */
+  pos: { x: number; y: number };
+  /** 素材文件名（保留原始空格） */
+  image: string;
+  /** 效果分组（如 "Suit Mult"）；中心未定义时缺省（存档不写 effect 键） */
+  effect?: string;
+  /** 中心 config，小丑效果参数的存档来源（数值在 extra / mult / t_mult 等字段） */
+  config: Record<string, unknown>;
+  /** 永恒贴纸兼容（card.lua:508 set_eternal 门控；false = 游戏拒绝该贴纸） */
+  eternal_compat: boolean;
+  /** 易腐贴纸兼容（card.lua:515 set_perishable 门控；false = 游戏拒绝该贴纸） */
+  perishable_compat: boolean;
+  /** 中文描述行（原始文本，含 {C:xx} 标记与 #N# 占位符） */
+  text: string[];
+  /** #N# 取值（开局状态静态解析；null = 不可静态取，对应描述行不显示） */
+  vars: (number | string | null)[];
+  /** 稀有度色（G.C.RARITY） */
+  colour: string;
+}
+
+/** 贴纸中文名（zh_CN labels：永恒 / 易腐 / 租用） */
+export const JOKER_STICKER_ZH: Record<string, string> = ${JSON.stringify(jokerStickerZh)};
+
+/** 贴纸徽章色（globals.lua G.C：ETERNAL 玫红 / PERISHABLE 蓝紫 / RENTAL 金褐） */
+export const JOKER_STICKER_COLOUR: Record<string, string> = ${JSON.stringify(jokerStickerColour)};
+
+/** 稀有度页签名（zh_CN k_common/k_uncommon/k_rare/k_legendary） */
+export const JOKER_RARITY_ZH: Record<number, string> = ${JSON.stringify(jokerRarityZh)};
+
+/** 稀有度配色（globals.lua G.C.RARITY：普通蓝 / 罕见绿 / 稀有红 / 传奇紫） */
+export const JOKER_RARITY_COLOUR: Record<number, string> = ${JSON.stringify(jokerRarityColour)};
+
+export const JOKERS: JokerDef[] = ${JSON.stringify(jokerDefs, null, 2)};
+`;
+writeFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/data/jokers.ts'),
+  `// AUTO-GENERATED by scripts/extractData.mjs — DO NOT EDIT\n// 来源: Code/game.lua P_CENTERS(j_*) / Code/card.lua Joker UI 链 loc_vars + Code/localization/zh_CN.lua + globals.lua G.C.RARITY\n` + jokerBody);
+console.log(`extracted ${jokerDefs.length} jokers:`);
+for (const r of [1, 2, 3, 4]) {
+  const list = jokerDefs.filter(d => d.rarity === r);
+  console.log(`  rarity ${r} (${jokerRarityZh[r]}): ${list.length} 张`);
+}
+const noVars = jokerDefs.filter(d => d.vars.length > 0 && d.vars.every(v => v === null));
+if (noVars.length) console.warn(`  ! ${noVars.length} 张小丑全部取值失败（描述仅剩静态行）: ${noVars.map(d => d.key).join(', ')}`);

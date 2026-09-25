@@ -5,7 +5,7 @@ import templateSource from '../data/templateSource';
 import { LuaTable, parseLua, serializeLua, jsonToLua } from './luaTable';
 import { deflateSave } from './deflate';
 import { validateSave } from './validate';
-import { applyConsumablesToSave, applyDeckToSave, type ConsumablesSpec } from './saveDeck';
+import { applyConsumablesToSave, applyDeckToSave, applyJokersToSave, type ConsumablesSpec, type JokersSpec } from './saveDeck';
 import type { DeckCard } from './deckGen';
 
 export const MIN_STAKE = 1;
@@ -169,13 +169,15 @@ function applySeed(root: LuaTable, seed: string): void {
 /** 生成指定牌组与赌注（1-8，白注~金注）的开局 save.jkr 字节流。
  *  cards 为目标牌堆（牌堆顺序，见 core/deckGen）：传入时替换存档牌堆，
  *  省略则沿用模板牌堆（模板虽是合法红牌组，但牌序来自别的种子）；
- *  consumables 为开局消耗牌（items = 区内顺序，每张自带负片标记），空列表跳过 */
+ *  consumables 为开局消耗牌（items = 区内顺序，每张自带负片标记），空列表跳过；
+ *  jokers 为开局小丑牌（items = 区内顺序，每张自带版本），空列表跳过 */
 export function generateSave(
   deckKey: string,
   stake: number = 1,
   init?: RunInitOverrides,
   cards?: DeckCard[],
   consumables?: ConsumablesSpec,
+  jokers?: JokersSpec,
 ): Uint8Array {
   const def = BACKS.find(b => b.key === deckKey && !b.omit);
   if (!def) throw new Error(`未知或不可选的牌组: ${deckKey}`);
@@ -197,6 +199,7 @@ export function generateSave(
   }
   if (cards) applyDeckToSave(root, cards);
   if (consumables && consumables.items.length > 0) applyConsumablesToSave(root, def, consumables);
+  if (jokers && jokers.items.length > 0) applyJokersToSave(root, jokers);
 
   validateSave(root);
   return deflateSave(serializeLua(root));

@@ -68,13 +68,69 @@ export function validateSave(root: LuaTable): void {
   }
 
   // 槽位数（v1.1）：starting_params 与对应牌区容量必须同步（读档时游戏不再从 starting_params 派生）。
-  // consumeables 例外：负片每张使 card_limit +1（card.lua:405-417），单列断言
+  // jokers / consumeables 的 card_limit 还要 +负片张数（card.lua:405-417），在各区单列断言
   const sp = g.get('starting_params') as LuaTable;
+
+  // 小丑牌区（v2）：结构按附录 D.3；版本含 闪箔/镭射/多彩/负片；card_limit = 槽位数 + 负片张数
+  const jokerArea = areas.get('jokers') as LuaTable;
+  const jokerCards = jokerArea.get('cards') as LuaTable;
+  const jokerCfg = jokerArea.get('config') as LuaTable;
+  need(jokerCfg.get('card_count') === jokerCards.entries.size, 'jokers.card_count 应等于实际张数');
   {
-    const cfg = (areas.get('jokers') as LuaTable).get('config') as LuaTable;
-    const want = sp.get('joker_slots');
-    need(cfg.get('card_limit') === want && cfg.get('temp_limit') === want,
-      `jokers 区 card_limit/temp_limit(${cfg.get('card_limit')}/${cfg.get('temp_limit')}) 应与 starting_params.joker_slots(${want}) 一致`);
+    let prevJRank = 0;
+    let jokerNegCount = 0;
+    for (const [, node] of jokerCards.entries) {
+      const t = node as LuaTable;
+      const sf = t.get('save_fields');
+      need(sf instanceof LuaTable && typeof (sf as LuaTable).get('center') === 'string'
+        && String((sf as LuaTable).get('center')).startsWith('j_'),
+        '小丑 save_fields.center 应为 j_* key');
+      need(t.get('added_to_deck') === true, '小丑 added_to_deck 应为 true');
+      const rank = t.get('rank');
+      need(rank === prevJRank + 1, `小丑 rank 应连续 1..n（当前 ${rank}）`);
+      prevJRank = rank as number;
+      // 贴纸（card.lua:506-523）：永恒/易腐互斥；租用令 cost=1（set_cost）且售价 = max(1, floor/2)，
+      // 此时 base_cost（中心定义价）≠ cost 是预期行为
+      const jokerAbility = t.get('ability') as LuaTable;
+      need(jokerAbility instanceof LuaTable, '小丑 ability 应为表');
+      const eternal = jokerAbility.get('eternal') === true;
+      const perishable = jokerAbility.get('perishable') === true;
+      const rental = jokerAbility.get('rental') === true;
+      need(!(eternal && perishable), '小丑不应同时带永恒与易腐贴纸（card.lua:508/515 互斥）');
+      if (perishable) {
+        need(jokerAbility.get('perish_tally') === 5,
+          `易腐小丑 perish_tally(${jokerAbility.get('perish_tally')}) 应为开局值 5（G.GAME.perishable_rounds）`);
+      }
+      if (rental) {
+        need(t.get('cost') === 1, `租用小丑 cost(${t.get('cost')}) 应为 1（card.lua:381 set_cost）`);
+        need(t.get('sell_cost') === 1, `租用小丑 sell_cost(${t.get('sell_cost')}) 应为 1（card.lua:382）`);
+      } else {
+        need(t.get('base_cost') === t.get('cost'), '小丑 base_cost 应等于 cost（租用小丑例外，cost=1）');
+      }
+      const ed = t.get('edition');
+      if (ed !== undefined) {
+        need(ed instanceof LuaTable, '小丑 edition 应为表');
+        const et = ed as LuaTable;
+        const marked = EDITIONS.map(e => e.key).filter(k => et.get(k) === true);
+        need(marked.length === 1, `小丑 edition 应恰好标记一个版本（当前 ${marked.length} 个）`);
+        need(et.get('type') === marked[0], `小丑 edition.type(${et.get('type')}) 应与标记(${marked[0]}) 一致`);
+        const edDef = EDITIONS.find(e => e.key === marked[0])!;
+        const field = EDITION_VALUE_FIELD[marked[0]];
+        if (field) {
+          need(et.get(field) === edDef.config.extra,
+            `小丑版本 ${marked[0]} 的 ${field}(${et.get(field)}) 应等于中心 config.extra(${edDef.config.extra})`);
+        }
+        if (marked[0] === 'negative') jokerNegCount++;
+      }
+    }
+    const jokerSlots = sp.get('joker_slots') as number;
+    const jokerLimit = jokerCfg.get('card_limit') as number;
+    need(jokerLimit === jokerSlots + jokerNegCount,
+      `jokers.card_limit(${jokerLimit}) 应为 槽位数(${jokerSlots}) + 负片张数(${jokerNegCount})`);
+    need(jokerCfg.get('temp_limit') === Math.max(jokerCards.entries.size, jokerLimit),
+      `jokers.temp_limit(${jokerCfg.get('temp_limit')}) 应为 max(张数, card_limit)（cardarea.lua:266）`);
+    need(jokerCards.entries.size - jokerNegCount <= jokerSlots,
+      `非负片小丑张数(${jokerCards.entries.size - jokerNegCount}) 不应超过槽位数(${jokerSlots})`);
   }
 
   // 消耗牌区（v2）：结构按附录 D，版本仅负片；card_limit = 槽位数 + 负片张数

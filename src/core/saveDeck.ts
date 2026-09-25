@@ -7,13 +7,20 @@
 import { LuaTable, cloneLuaTable, jsonToLua, type LuaValue } from './luaTable';
 import { ENHANCEMENTS, EDITIONS, type EnhancementDef } from '../data/cardMods';
 import { type ConsumableDef } from '../data/consumables';
+import { type JokerDef } from '../data/jokers';
 import { consumableByKey, type ConsumableItem } from './consumables';
+import { jokerByKey, PERISHABLE_ROUNDS, type JokerItem } from './jokers';
 import type { BackDef } from '../data/backs';
 import type { DeckCard } from './deckGen';
 
 /** 开局消耗牌规格：items = 区内顺序（每张自带负片标记） */
 export interface ConsumablesSpec {
   items: ConsumableItem[];
+}
+
+/** 开局小丑牌规格：items = 区内顺序（每张自带版本） */
+export interface JokersSpec {
+  items: JokerItem[];
 }
 
 const SUIT_FILE: Record<string, string> = { Spades: 'S', Hearts: 'H', Clubs: 'C', Diamonds: 'D' };
@@ -270,4 +277,128 @@ export function applyConsumablesToSave(root: LuaTable, deck: BackDef, spec: Cons
     }
     uv.set('v_crystal_ball', true);
   }
+}
+
+// ---------- 小丑牌写入（PROJECT_SPEC.md 5.9 / 附录 D.3）----------
+
+/**
+ * 单张小丑卡表：18 键集合与消耗牌同构（无 consumeable 子表），数值与键序按
+ * card.lua:277-307 set_ability 从 center 定义派生，真机样例 red_round1_jokers.jkr 逐字段对齐：
+ *   - x_mult 默认 1（小丑的 set_ability 公式与消耗牌一致）
+ *   - effect 为空串时也写（游戏无条件拷贝 center.effect；仅未定义该字段的中心如 j_gift 不写）
+ *   - params.discover = false、bypass_back = {0,0}（小丑来源是商店/新建，不是牌组，样例 D.3）
+ * 创建期特例（card.lua:308-333 set_ability 尾部）：这些字段缺失会让游戏在读档后
+ * nil 算术崩溃（invis_rounds +1）或悬停说明报错（to_do_poker_hand 传 nil），
+ * 与游戏开局创建小丑时的赋值一致地补上。
+ * 贴纸（card.lua:506-523 set_eternal/set_perishable/set_rental）写在 ability 上：
+ *   - 永恒/易腐互斥且受 center compat 门控（游戏 set_* 直接拒绝）；
+ *   - 易腐开局写 perish_tally = G.GAME.perishable_rounds（game.lua:1914，= 5）；
+ *   - 租用令 cost = 1（card.lua:381 set_cost）、sell_cost = max(1, floor(cost/2)) = 1
+ *     （card.lua:382；租金 $3/回合由游戏按 G.GAME.rental_rate 逐回合扣，无需落盘）。
+ */
+function buildJokerCard(
+  def: JokerDef,
+  rank: number,
+  sortId: number,
+  edition: JokerItem['edition'],
+  stickers: Pick<JokerItem, 'eternal' | 'perishable' | 'rental'> = {},
+): LuaTable {
+  const cfg = def.config;
+  const num = (k: string, dflt: number): number => (typeof cfg[k] === 'number' ? (cfg[k] as number) : dflt);
+  const ability = new LuaTable()
+    .set('set', 'Joker')
+    .set('name', def.enName)
+    .set('order', def.order);
+  if (def.effect !== undefined) ability.set('effect', def.effect);
+  if (cfg.extra !== undefined) ability.set('extra', jsonToLua(cfg.extra));
+  ability.set('bonus', num('bonus', 0));
+  ability.set('h_mult', num('h_mult', 0));
+  ability.set('mult', num('mult', 0));
+  ability.set('t_mult', num('t_mult', 0));
+  ability.set('t_chips', num('t_chips', 0));
+  ability.set('h_dollars', num('h_dollars', 0));
+  ability.set('p_dollars', num('p_dollars', 0));
+  ability.set('h_size', num('h_size', 0));
+  ability.set('d_size', num('d_size', 0));
+  ability.set('x_mult', num('Xmult', 1));
+  ability.set('perma_bonus', 0);
+  ability.set('extra_value', 0);
+  ability.set('h_x_mult', num('h_x_mult', 0));
+  ability.set('hands_played_at_create', 0);
+  ability.set('type', typeof cfg.type === 'string' ? (cfg.type as string) : '');
+
+  const extra = (cfg.extra ?? {}) as Record<string, unknown>;
+  if (def.enName === 'Invisible Joker') ability.set('invis_rounds', 0);
+  if (def.enName === 'To Do List') ability.set('to_do_poker_hand', 'High Card');   // 游戏随机取可见牌型；生成值取高牌
+  if (def.enName === 'Caino') ability.set('caino_xmult', 1);
+  if (def.enName === 'Yorick') ability.set('yorick_discards', typeof extra.discards === 'number' ? extra.discards : 0);
+  if (def.enName === 'Loyalty Card') {
+    ability.set('burnt_hand', 0);
+    ability.set('loyalty_remaining', typeof extra.every === 'number' ? extra.every : 0);
+  }
+  // 贴纸：互斥与 compat 门控与游戏 set_* 行为一致
+  if (stickers.eternal && def.eternal_compat) ability.set('eternal', true);
+  if (stickers.perishable && def.perishable_compat && !stickers.eternal) {
+    ability.set('perishable', true);
+    ability.set('perish_tally', PERISHABLE_ROUNDS);
+  }
+  if (stickers.rental) ability.set('rental', true);
+
+  // 租用小丑的当前价 = $1（card.lua:381），售价 = max(1, floor(cost/2))（card.lua:382）；
+  // base_cost 保持中心定义价不变（样例：base_cost = cost = 6 的非租用小丑）
+  const rental = ability.get('rental') === true;
+  const cost = rental ? 1 : def.cost;
+  const t = new LuaTable()
+    .set('save_fields', new LuaTable().set('center', def.key))
+    .set('label', def.enName)                  // card.lua:340 set='Joker' 时 label = ability.name
+    .set('rank', rank)
+    .set('sort_id', sortId)
+    .set('facing', 'front')
+    .set('sprite_facing', 'front')
+    .set('base', new LuaTable()
+      .set('nominal', 0).set('suit_nominal', 0).set('face_nominal', 0).set('times_played', 0))
+    .set('ability', ability)
+    .set('base_cost', def.cost)
+    .set('cost', cost)
+    .set('extra_cost', 0)
+    .set('sell_cost', Math.max(1, Math.floor(cost / 2)))
+    .set('added_to_deck', true)
+    .set('debuff', false)
+    .set('bypass_discovery_center', true)
+    .set('bypass_discovery_ui', true)
+    .set('bypass_lock', true)
+    .set('params', new LuaTable()
+      .set('discover', false)                  // 样例 D.3：小丑不改 discover（消耗牌是 true）
+      .set('bypass_discovery_center', true)
+      .set('bypass_discovery_ui', true)
+      // 小丑来源与牌组无关：bypass_back 固定 {0,0}（附录 D.4，区别于消耗牌的牌组 pos）
+      .set('bypass_back', new LuaTable().set('y', 0).set('x', 0)));
+  const ed = buildEdition(edition, { allowNegative: true });
+  if (ed) t.set('edition', ed);
+  return t;
+}
+
+/**
+ * 把开局小丑写进 jokers 区：cards 替换、card_count 同步；槽位数由 applyRunInit 落盘。
+ * 负片每张使 jokers 区上限 +1（card.lua:687 set_edition，与消耗区同规则），
+ * card_limit 直接写 +1 后的值——读档不走 set_edition；temp_limit = max(张数, card_limit)。
+ * sort_id 从全存档最大值续接（唯一即可，附录 D.4）。
+ */
+export function applyJokersToSave(root: LuaTable, spec: JokersSpec): void {
+  const area = (root.get('cardAreas') as LuaTable).get('jokers') as LuaTable;
+  let sortId = maxSortId(root);
+  const list = new LuaTable();
+  spec.items.forEach((item, i) => {
+    const def = jokerByKey(item.key);
+    if (!def) throw new Error(`未知小丑: ${item.key}`);
+    list.set(i + 1, buildJokerCard(def, i + 1, ++sortId, item.edition,
+      { eternal: item.eternal, perishable: item.perishable, rental: item.rental }));
+  });
+  area.set('cards', list);
+  const cfg = area.get('config') as LuaTable;
+  cfg.set('card_count', spec.items.length);
+
+  const negCount = spec.items.filter(it => it.edition === 'negative').length;
+  cfg.set('card_limit', (cfg.get('card_limit') as number) + negCount);
+  cfg.set('temp_limit', Math.max(spec.items.length, cfg.get('card_limit') as number));
 }

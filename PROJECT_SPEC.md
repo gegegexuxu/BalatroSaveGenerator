@@ -433,7 +433,6 @@ shader 波动背景、粒子、卡牌晃动（tilt/juice）、抽卡翻转动画
 **❌ 已知差异（有意为之）**：魔法样例的 `consumeables.config.card_limit = 3`（含水晶球 +1 的已生效值），本工具写 2（= 面板槽位数），由游戏读档 redeem 后追平；其余字段无差异。
 
 ### 5.7 Seed 与 RNG
-
 v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 
 - 模板的 `pseudorandom` 计数器保留原值即可（不改动就没有一致性问题）；
@@ -467,8 +466,22 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
   | 橙注 | ≥7 | `modifiers.enable_perishables_in_shop = true` |
   | 金注 | ≥8 | `modifiers.enable_rentals_in_shop = true` |
 - **起始底注（v3 规划，暂未开放）**：届时需同步 `round_resets.ante` 与 `round_resets.blind_ante`（后者驱动选择界面显示数值，`UI_definitions.lua:1548`；游戏在击败 Boss 时同步两者，`button_callbacks.lua:2950`）。小盲基础值（`get_blind_amount` scaling=1）：300/800/2000/5000/11000/20000/35000/50000；大盲 ×1.5、Boss ×2；奖励 $3/$4/$5。
-- `core/validate.ts` 在序列化前断言：顶层含 `STATE=7`、`GAME.round=0`、`round_resets.ante=1`、`GAME.stake` 为 1-8 整数且三处 stake 字段一致、蓝注及以上弃牌数三处同步、六个 cardAreas 齐全、`deck.cards` 张数 = `starting_deck_size` = `deck.config.card_limit`、各槽位数值自洽。断言失败直接抛错，不产出文件。
+- `core/validate.ts` 在序列化前断言：顶层含 `STATE=7`、`GAME.round=0`、`round_resets.ante=1`、`GAME.stake` 为 1-8 整数且三处 stake 字段一致、蓝注及以上弃牌数三处同步、六个 cardAreas 齐全、`deck.cards` 张数 = `starting_deck_size` = `deck.config.card_limit`、各槽位数值自洽、jokers / consumeables 卡表结构与容量自洽（见 5.6 / 5.9）。断言失败直接抛错，不产出文件。
 - 导出文件名固定 `save.jkr`。
+
+### 5.9 小丑卡对象（v2 起始小丑）
+
+**✅ 已实现（v2）**：`core/saveDeck.ts:applyJokersToSave` 按附录 D.3 构建小丑卡表写进 `cardAreas.jokers`（cards 替换 + card_count 同步；槽位数由 applyRunInit 落盘）。生成结果与真机样例 `red_round1_jokers.jkr`（j_gift + j_wrathful_joker）**逐字段一致**——仅 `sort_id`（实例计数器，全存档最大值续接）与 `ability.hands_played_at_create`（样例取自已打 2 手牌的对局 =2，生成值为开局 0）不同，门禁见 `test/jokersSave.test.ts`。要点（与附录 D.3/D.4 配合）：
+
+- 小丑卡只写 `save_fields.center`（`j_*`），无 `card`/`playing_card` 键；`label` = 英文名（`card.lua:340` set='Joker' 时 label = ability.name）；
+- `params.discover = false`（**消耗牌是 true**）、`params.bypass_back = {y:0,x:0}`（**消耗牌是牌组 pos**——小丑来源是商店/新建，与牌组无关）；
+- `ability` 数值按 `card.lua:277-307 set_ability` 从中心定义派生：`x_mult` 缺省 **1**（小丑/消耗牌同公式），`mult` 等缺省 0，**无 `consumeable` 子表**（那是消耗牌专属的 center.config 双写）；`effect` 为空串也写（游戏无条件拷贝 `center.effect`），仅中心未定义该字段时整个键不写（如 j_gift）；
+- **创建期特例（card.lua:308-333 set_ability 尾部）必须补写**，否则游戏读档后 nil 算术崩溃（Invisible Joker 的 `invis_rounds +1`）或悬停说明报错（To Do List 的 `localize(nil)`）：Invisible Joker → `invis_rounds=0`；To Do List → `to_do_poker_hand`（游戏为随机可见牌型，生成器固定 `'High Card'`）；Caino → `caino_xmult=1`；Yorick → `yorick_discards=extra.discards`；Loyalty Card → `burnt_hand=0` + `loyalty_remaining=extra.every`；
+- **版本与贴纸（单卡定制弹窗 `ui/jokerDetailModal.ts`）**：图鉴点牌**不直接入列**，而是打开单卡定制弹窗（结构复用扑克详情的 `.card-detail/.cd-*` 样式）：中间大图（版本 shader 静态快照 + 贴纸**整卡原尺寸**叠加——贴纸素材 142×190 与小丑牌同尺寸，游戏即整卡覆盖绘制，card.lua:4479-4486），左右箭头切换 **版本**（无/闪箔/镭射/多彩/负片）、**永恒/易腐**（互斥循环组 无→永恒卡→易腐，card.lua:508/515，按 compat 过滤不可用态）与 **租用**（可与两者叠加，独立一组）；「创建」先做容量检查（不通过则 toast 且弹窗保持打开），「返回」丢弃草稿。版本与贴纸都是逐牌属性——加入时刻的选择；负片 `edition = { negative = true, type = "negative" }`（无数值字段），**每张使 jokers 区上限 +1**（`card.lua:687` set_edition + `cardarea.lua:265-266` HUD，同消耗区规则，读档不走 set_edition 故直接写 +1 后的 card_limit；temp_limit = max(张数, card_limit)）；闪箔/镭射/多彩按 `EDITION_VALUE_FIELD` 写数值项（= 中心 config.extra）；
+- **贴纸规则（card.lua:506-523 set_eternal / set_perishable / set_rental，写在 ability 上）**：永恒与易腐**互斥**（set_eternal 拒绝已易腐的牌、反之亦然）；compat 门控——部分小丑不容永恒（11 张）/易腐（18 张）（game.lua `eternal_compat`/`perishable_compat = false`），UI 禁用对应组的箭头，写入时同样拒绝；易腐开局写 `perish_tally = 5`（`G.GAME.perishable_rounds`，game.lua:1914）；**租用令 `cost = 1`**（card.lua:381 set_cost）、`sell_cost = max(1, floor(cost/2)) = 1`（card.lua:382），`base_cost` 保持中心定义价（validate 对租用小丑豁免 base_cost=cost 断言）；租金 $3/回合由游戏按 `G.GAME.rental_rate` 逐回合扣，无需落盘。贴纸中文名/徽章色由提取脚本输出（zh_CN labels + G.C 的 ETERNAL 玫红/PERISHABLE 蓝紫/RENTAL 金褐），贴纸图标 = `assets/sticker/<Eternal|Perishable|Rental>.png` 叠加在牌面上（入口与定制弹窗大图同款）；
+- **UI**：入口 `ui/jokersEntry.ts` 挂在消耗牌入口下方、跨 `.switchers` 两列（左缘对齐消耗牌入口、右缘对齐种子组件，宽 866px，见 main.css `.jokers-entry`），带贴纸的牌在牌面上叠加贴纸图标；图鉴 `ui/jokersModal.ts` 按**稀有度页签**（普通/罕见/稀有/传奇，底色 = globals.lua `G.C.RARITY`）2×6 分页，点牌进入单卡定制弹窗；
+- **数据** `src/data/jokers.ts` 由提取脚本第 8 节生成：150 张 `j_*` 定义 + zh_CN 名称描述 + `card.lua` Joker UI 链逐张 `loc_vars` 的**静态求值**（开局状态：概率基数 1、动态倍率 0、X 倍率 1、牌堆 52）；取不到的占位记 null、对应描述行由界面省略，已知边界清单钉在 `test/jokers.test.ts` 的 `UNRESOLVED_ALLOWED`（每回合随机值与无 config 的硬编码小丑共 7 张，扩大 = 回退）；
+- `validate` 断言：`save_fields.center` 以 `j_` 开头、`base_cost=cost`、`sell_cost=floor(cost/2)`、`rank` 连续 1..n、edition 恰好标记一个版本且 type 一致 + 数值项 = config.extra、`card_limit = joker_slots + 负片张数`、非负片张数 ≤ 槽位。
 
 ---
 
@@ -479,7 +492,7 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 | v1（MVP） | 15 种牌组选择（魔法/幽灵待消耗品样本）→ 生成并下载 `save.jkr` + 使用说明弹窗；**赌注选择（白注~金注）** | 进行中（牌组+赌注已实现，牌组规则数值未应用） |
 | v1.1 | 基础数值自定义：金钱、手牌数、弃牌数、手牌区大小、小丑/消耗牌槽位；牌组规则落地（deckRules） | 进行中（数值与牌组数值修正已实现；牌组非数值规则待补：星云/黄道起始优惠券、幽灵出现率、绿牌组无利息） |
 | v1.2 | **卡牌「版本」**（闪箔/全息/多彩/负片）：`edition` 存档字段 + 四个 shader 的 WebGL 移植（单共享 context）+ 详情弹窗预览 | 进行中 |
-| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 进行中（**起始消耗品：已完成**——入口/弹窗/负片开关/牌组默认/存档写入（对真机样例逐字段一致）与 validate 断言均已交付，见 5.6；8 级赌注已实现） |
+| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 进行中（**起始消耗品：已完成**——入口/弹窗/负片开关/牌组默认/存档写入（对真机样例逐字段一致）与 validate 断言均已交付，见 5.6；**起始小丑：已完成**——入口/图鉴（稀有度页签）/单卡定制弹窗（版本+永恒/易腐/租用贴纸）/存档写入（对 red_round1_jokers.jkr 逐字段一致）/数据提取（card.lua loc_vars 静态求值）/validate 断言均已交付，见 5.9；seed 自定义已实现，见 5.7 现状；8 级赌注已实现） |
 | v3 | 进阶：牌型起始等级、优惠券、商店概率、逐张定制 52 张牌（强化/版本/印章）、起始底注 | 规划 |
 | 远期 | 解析已有存档、场景级 shader/动效增强（背景漩涡、溶解动画等；卡牌版本 shader 已单列为 v1.2） | 不承诺 |
 

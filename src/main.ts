@@ -2,9 +2,11 @@ import './style/main.css';
 import { BACKS } from './data/backs';
 import { STAKES } from './data/stakes';
 import type { ConsumableDef } from './data/consumables';
+import type { JokerDef } from './data/jokers';
 import { generateSave } from './core/generate';
 import { blankCard, defaultDeckCards, renumberDeck, type DeckCard } from './core/deckGen';
 import { deckDefaultConsumables, type ConsumableItem } from './core/consumables';
+import { canAddJoker, type JokerItem, type StickerKey } from './core/jokers';
 import { createDeckSwitcher } from './ui/deckSwitcher';
 import { createStakeSwitcher } from './ui/stakeSwitcher';
 import { createRunParamsPanel, deckInit } from './ui/runParamsPanel';
@@ -12,6 +14,9 @@ import { createDeckEditorModal, type CardEditAction } from './ui/deckEditorModal
 import { createCardDetailModal } from './ui/cardDetailModal';
 import { createConsumablesModal } from './ui/consumablesModal';
 import { createConsumablesEntry } from './ui/consumablesEntry';
+import { createJokersModal } from './ui/jokersModal';
+import { createJokersEntry } from './ui/jokersEntry';
+import { createJokerDetailModal } from './ui/jokerDetailModal';
 import { createUsageModal, autoShowOnce, showToast } from './ui/usageModal';
 import { h } from './ui/dom';
 
@@ -31,6 +36,19 @@ const consumableImages = import.meta.glob('../assets/{tarot,planet,spectral}/*.p
   query: '?url',
   import: 'default',
 }) as Record<string, string>;
+// 小丑牌素材（assets/joker/<英文名>.png，文件名含空格；Driver's License 的资源名是 Driver.png，
+// 已在提取脚本的 def.image 里落到真实文件名）
+const jokerImages = import.meta.glob('../assets/joker/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+// 贴纸图标（assets/sticker/<Eternal|Perishable|Rental>.png，键 = 贴纸 key）
+const stickerImages = import.meta.glob('../assets/sticker/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
 const imageUrl = (enName: string): string | undefined =>
   deckImages[`../assets/decks/${enName}.png`];
@@ -38,6 +56,10 @@ const chipUrl = (file: string): string | undefined =>
   chipImages[`../assets/stakes/${file}`];
 const consumableUrl = (def: ConsumableDef): string | undefined =>
   consumableImages[`../assets/${def.set.toLowerCase()}/${def.image}`];
+const jokerUrl = (def: JokerDef): string | undefined =>
+  jokerImages[`../assets/joker/${def.image}`];
+const jokerStickerUrl = (key: StickerKey): string | undefined =>
+  stickerImages[`../assets/sticker/${key.charAt(0).toUpperCase()}${key.slice(1)}.png`];
 
 const selectable = BACKS.filter(b => !b.omit);
 
@@ -51,7 +73,6 @@ const header = h('header', { class: 'app-header' }, [
 
 const exportBtn = h('button', { class: 'btn btn-blue btn-export', text: '导出存档' });
 const helpBtn = h('button', { class: 'btn btn-ghost', text: '使用说明' });
-const actions = h('div', { class: 'actions' }, [exportBtn, helpBtn]);
 
 const footer = h('footer', { class: 'app-footer', text: '适用游戏版本 1.0.1o · 导出 save.jkr · 放入 %APPDATA%\\Balatro\\<存档位> 后点「继续游戏」' });
 
@@ -67,7 +88,12 @@ let deckEdited = false;
 // v2 起写入导出存档（PROJECT_SPEC.md 5.6）；负片是逐牌属性——加入时刻弹窗负片开关的状态
 let workingConsumables: ConsumableItem[] = [];
 let consumablesNegative = false;   // 负片开关当前状态（弹窗内切换；不随弹窗开关重置）
+// 工作小丑牌（逐牌记录）：游戏无「牌组赠送起始小丑」规则，故不随牌组切换重建，始终为空起步。
+// v2 起写入导出存档（PROJECT_SPEC.md 5.9）；版本与贴纸都是逐牌属性——加入时刻定制弹窗里的选择
+let workingJokers: JokerItem[] = [];
 const runParams = createRunParamsPanel(deckInit(selectable[0], 1));
+// 「导出存档 / 使用说明」挂在右列顶部（种子组件上方，各占一行，宽度撑满参数面板列）
+runParams.root.prepend(exportBtn, helpBtn);
 const cardDetail = createCardDetailModal();
 const deckEditor = createDeckEditorModal({
   onReset: () => {
@@ -103,10 +129,44 @@ const consumablesEntry = createConsumablesEntry({
     setConsumables(items);
   },
 });
+// 小丑牌弹窗（图鉴）：点牌打开单卡定制弹窗（版本/贴纸在那里选），定制完成才入列
+const jokers = createJokersModal({
+  imageUrl: jokerUrl,
+  onOpenDetail: def => jokerDetail.open({
+    def,
+    imageUrl: jokerUrl,
+    canAdd: () => {
+      // 负片不占槽位（card.lua:687）：约束是非负片张数 < 槽位数；负片版本永远可加
+      const cap = runParams.values().jokerSlots;
+      const negCount = workingJokers.filter(it => it.edition === 'negative').length;
+      if (canAddJoker(workingJokers.length - negCount, cap)) return null;
+      return `小丑牌已达上限（${workingJokers.length}/${cap + negCount}）——选「负片」版本可继续添加，或调大参数面板的小丑槽位`;
+    },
+    stickerUrl: jokerStickerUrl,
+    onConfirm: item => setJokers([...workingJokers, item]),
+  }),
+});
+// 小丑牌单卡定制弹窗：版本 / 永恒·易腐（互斥循环）/ 租用 的箭头切换
+const jokerDetail = createJokerDetailModal();
+// 小丑牌入口：挂在消耗牌入口下方，横跨左列与右列下方（左缘对齐消耗牌入口、右缘对齐种子组件）
+const jokersEntry = createJokersEntry({
+  capacity: () => runParams.values().jokerSlots,
+  imageUrl: jokerUrl,
+  stickerUrl: jokerStickerUrl,
+  onOpen: () => jokers.open(workingJokers),
+  onRemove: index => {
+    const items = [...workingJokers];
+    items.splice(index, 1);
+    setJokers(items);
+  },
+});
 // 槽位数可手改：面板里数值一变就重绘入口（N / M 计数与按钮禁用状态都要跟着变）。
 // input 与 change 都听：边打字边反映，失焦提交时再兜一次
 for (const type of ['input', 'change'] as const) {
-  runParams.root.addEventListener(type, () => consumablesEntry.render(workingConsumables));
+  runParams.root.addEventListener(type, () => {
+    consumablesEntry.render(workingConsumables);
+    jokersEntry.render(workingJokers);
+  });
 }
 const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
   currentDeck = def;
@@ -137,6 +197,13 @@ function rebuildConsumables(): void {
   setConsumables(deckDefaultConsumables(currentDeck).map(key => ({ key, negative: false })));
 }
 rebuildConsumables();
+setJokers(workingJokers);   // 初始渲染入口（无牌组默认小丑，恒为空起步）
+
+/** 小丑牌列表的唯一写入口：同步工作状态与入口展示（弹窗持有自己的副本，关闭后以这里为准） */
+function setJokers(items: JokerItem[]): void {
+  workingJokers = items;
+  jokersEntry.render(workingJokers);
+}
 
 /** 牌堆手工编辑：右键删除；左键详情里的属性改动（type='modify'，牌对象已就地改好）；
  *  「创建新的」新增一张（type='create'，不影响原有牌） */
@@ -175,10 +242,10 @@ const app = document.getElementById('app')!;
 app.append(
   h('div', { class: 'app' }, [
     header,
-    actions,
     h('div', { class: 'switchers' }, [
       h('div', { class: 'switchers-col' }, [deckSwitcher.root, stakeSwitcher.root, consumablesEntry.root]),
       runParams.root,
+      jokersEntry.root,   // 跨两列第三行：左缘对齐消耗牌入口、右缘对齐种子组件（布局见 main.css .jokers-entry）
     ]),
     footer,
   ]),
@@ -186,6 +253,8 @@ app.append(
   deckEditor.root,
   cardDetail.root,
   consumables.root,
+  jokers.root,
+  jokerDetail.root,
   h('div', { class: 'toast', 'aria-live': 'polite' }),
 );
 
@@ -194,7 +263,7 @@ function exportSave(): void {
   try {
     const bytes = generateSave(currentDeck.key, currentStake, runParams.values(), workingCards, {
       items: workingConsumables,
-    });
+    }, { items: workingJokers });
     const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -226,6 +295,8 @@ document.addEventListener('keydown', e => {
   if (cardDetail.root.classList.contains('show')) return;   // 详情弹窗打开时方向键不切牌组
   if (deckEditor.root.classList.contains('show')) return;   // 牌组编辑弹窗打开时方向键不切牌组
   if (consumables.root.classList.contains('show')) return;  // 消耗牌弹窗打开时方向键不切牌组
+  if (jokers.root.classList.contains('show')) return;       // 小丑牌弹窗打开时方向键不切牌组
+  if (jokerDetail.root.classList.contains('show')) return;  // 小丑定制弹窗打开时方向键不切牌组
   if (e.target instanceof HTMLInputElement) return; // 参数输入框内方向键用于调数值
   if (e.key === 'ArrowLeft') deckSwitcher.prev();
   if (e.key === 'ArrowRight') deckSwitcher.next();

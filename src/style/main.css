@@ -333,18 +333,16 @@ body::before {
 .btn-blue { background: var(--c-blue); }
 .btn-ghost { background: var(--c-red); }
 
-.actions {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
 /* ---------- 双切换器 + 开局参数面板 ---------- */
 .switchers {
-  display: flex;
-  align-items: flex-start;   /* 面板顶部与牌组卡片顶部对齐 */
+  display: grid;
+  /* 左列 = 牌组/赌注框 612px（箭头 41×2 + 11×2 + 508），右列 = 参数面板 258px，与原 flex 内容宽一致；
+     小丑牌入口跨两列放第三行（.jokers-entry） */
+  grid-template-columns: 612px 258px;
   justify-content: center;
-  gap: 48px;                 /* 与牌组组件的间隔（原 24px 加倍）*/
+  column-gap: 48px;          /* 与牌组组件的间隔（原 24px 加倍）*/
+  row-gap: 16px;             /* 与左列内部的行距一致（第三行的小丑牌入口贴消耗牌下方）*/
+  align-items: start;        /* 面板顶部与牌组卡片顶部对齐 */
   width: 100%;
 }
 .switchers-col {
@@ -635,7 +633,7 @@ body::before {
   padding: 0;
   border: none;
   border-radius: 6px;
-  background: var(--c-blue);
+  background: var(--c-orange);
   color: var(--c-white);
   font-family: inherit;
   font-size: 22px;
@@ -738,14 +736,6 @@ body::before {
   overflow: hidden;          /* 裁掉标题栏直角 */
   display: flex;
   flex-direction: column;
-}
-.cd-title {
-  background: var(--c-black);
-  padding: 12px 20px;
-  font-size: 22px;
-  font-weight: 700;
-  text-shadow: 2px 2px 0 rgba(0, 0, 0, .45);
-  border-bottom: 2px solid var(--c-grey);
 }
 .cd-body {
   padding: 20px 24px;
@@ -882,7 +872,6 @@ body::before {
 }
 .cd-btn:hover { box-shadow: inset 0 0 0 999px var(--ui-hover), 0 4px 0 rgba(0, 0, 0, .35); }
 .cd-btn:active { transform: translateY(2px); box-shadow: inset 0 0 0 999px var(--ui-hover), 0 2px 0 rgba(0, 0, 0, .35); }
-.cd-confirm { background: var(--c-red); }     /* 仅编辑模式出现 */
 .cd-cancel { background: var(--c-blue); }
 .cd-create { background: var(--c-orange); }
 .deck-rank-chip {
@@ -974,7 +963,7 @@ body::before {
   border: none;
   border-radius: 6px;
   padding: 0;
-  background: var(--c-orange);
+  background: var(--c-blue);
   color: var(--c-white);
   font-family: inherit;
   font-size: 22px;
@@ -1039,13 +1028,6 @@ body::before {
   font-size: 12px;
   text-align: center;
 }
-.ce-neg {
-  flex: none;
-  padding: 6px 12px;
-  font-size: 17px;
-  background: var(--c-black);   /* 关：暗底弱化 */
-}
-.ce-neg.on { background: var(--c-orange); }   /* 开：橙底醒目（导出时全部消耗牌写负片） */
 .ce-edit {
   flex: none;
   padding: 6px 16px;
@@ -1237,10 +1219,248 @@ body::before {
 .cm-back:hover { filter: brightness(1.08); }
 .cm-back:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
 
+/* ---------- 小丑牌入口（消耗牌入口下方，横向贯通两列）----------
+   挂在 .switchers 第三行跨两列（grid-column: 1/-1），margin-left: 52px 使左缘
+   与消耗牌入口（508px 框体，居中于 612px 列）左缘对齐、右缘与种子组件（右列 258px）
+   右缘对齐 ⇒ 宽 = 612+48+258-52 = 866px。其余语汇（黑底牌区、重叠步进、按钮）与
+   消耗牌入口一致；「新增小丑牌」按钮用 --set-joker（游戏的小丑系配色）。 */
+.switchers > .jokers-entry {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  margin-left: 52px;         /* (612-508)/2：对齐消耗牌入口左缘 */
+}
+.jokers-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;                 /* > 按钮的 5px 硬阴影，避免压到下方黑块顶边 */
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 8px 14px 9px;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+.je-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.je-head { font-size: 18px; color: var(--c-white); }
+.je-head.je-over { color: var(--c-red); }   /* 槽位数被调小后已选数量可能超过容量，标红提示 */
+.je-cards {
+  display: flex;
+  align-items: center;
+  min-height: 158px;        /* 150px 牌高 + 上下各 4px 内边距：没牌时也保持黑块高度 */
+  padding: 4px;
+  overflow: hidden;
+  background: var(--c-black);
+  border-radius: 6px;
+}
+.je-card {
+  position: relative;
+  flex: none;
+  width: 112px;
+  height: 150px;            /* 142:190 原比例 */
+}
+/* 水平排布，牌多时步进由 ts 按可用宽度收缩（--step）：默认步进 72 ⇒ 相邻重叠 40px */
+.je-card + .je-card { margin-left: calc(var(--step, 72px) - 112px); }
+.je-card { cursor: pointer; box-shadow: 2px 2px 0 rgba(0, 0, 0, .18); }
+.je-card:hover { z-index: 1; outline: 2px solid var(--c-orange); outline-offset: 1px; }   /* 悬浮抬高，避免被右侧叠压的牌盖住（同 .ce-card:hover） */
+.je-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.je-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+}
+.je-edit {
+  flex: none;
+  padding: 6px 16px;
+  font-size: 18px;
+  background: var(--set-joker);   /* 游戏的小丑系配色（G.C.SECONDARY_SET.Joker 的灰蓝），与页签/说明色呼应 */
+}
+/* 贴纸整卡叠加：素材 142×190 与牌面同尺寸（游戏里 sticker 即整卡覆盖层，card.lua:4479-4486），
+   直接铺满牌面；永恒/易腐互斥最多一层，租用可叠加为两层 */
+.je-sticker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+/* ---------- 小丑牌单卡定制弹窗 ----------
+   结构复用扑克详情弹窗的 .card-detail / .cd-* 样式；差异仅三点：
+   三个组（版本 / 永恒·易腐互斥循环 / 租用）→ 牌面跨 3 行；牌面是 142:190 的小丑比例；
+   牌面上按原尺寸叠加贴纸层（同入口 .je-sticker）。 */
+.joker-detail .cd-card-cell { grid-row: 1 / span 3; }
+.jd-face {
+  position: relative;
+  width: 216px;
+  aspect-ratio: 142 / 190;   /* 小丑牌原比例（142×190） */
+}
+.jd-face .jd-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.jd-sticker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+/* ---------- 小丑牌图鉴弹窗（v2：稀有度页签 + 写入导出存档）----------
+   结构与消耗牌图鉴一致（.consumables-modal 一套的镜像，jm- 前缀）：
+   稀有度页签（普通/罕见/稀有/传奇，底色 = G.C.RARITY，由 ts 注入 --tab-colour）+
+   两行 × 6 张分页牌池 +「返回」；点牌打开单卡定制弹窗（版本/贴纸在那里选）。 */
+.jokers-modal {
+  width: min(1140px, 96vw);
+  max-height: 92vh;
+  overflow: auto;           /* 兜底：窗口很矮时整体滚动，内层网格仍各自滚动 */
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+/* 稀有度页签行：左缘与牌池框对齐（牌池被左右翻页箭头各占 41px + 11px 间距，故缩进 52px） */
+.jm-tabs { display: flex; gap: 10px; flex: none; padding-left: 52px; }
+.jm-view { display: flex; align-items: center; gap: 11px; }
+.jm-arrow { height: 100%; min-height: 84px; max-height: 160px; background: var(--c-black); }
+.jm-nav-hidden { visibility: hidden; }   /* 只有一页时收起翻页控件，但保留占位不使牌池变宽 */
+.jm-pages {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 10px;
+}
+/* 行高用「整行宽高比」锁死（同 .cm-row）：6 列 × 142:190 + 5 个 1% 间距 ⇒ 行高 = 行宽 / 4.72 */
+.jm-row {
+  display: flex;
+  gap: 1%;
+  aspect-ratio: 4.72 / 1;
+}
+.jm-dots { flex: none; }
+.jm-tab {
+  flex: none;
+  height: 36px;
+  padding: 0 18px;
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  background: var(--c-black);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.jm-tab:hover { filter: brightness(1.15); }
+.jm-tab:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+/* 选中态：稀有度色底（--tab-colour 由 ts 按 G.C.RARITY 注入）+ 白字 */
+.jm-tab.active { color: var(--c-white); background: var(--tab-colour, var(--c-grey)); }
+.jcard {
+  position: relative;
+  flex: 0 0 15.833%;   /* 每行固定 6 张：(100% - 5×1%) / 6；高度由 .jm-row 的行高拉伸得到 */
+  cursor: pointer;
+  user-select: none;
+}
+.jcard:hover { outline: 2px solid var(--c-orange); outline-offset: 1px; }
+.jm-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+/* 素材缺失时的占位（应仅在数据与资源不同步时出现） */
+.jm-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  font-size: 15px;
+  text-align: center;
+}
+.jm-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-black);
+  border: 2px solid var(--c-white);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-white);
+}
+.jm-desc { font-size: 16px; line-height: 1.4; }
+.jm-desc-name { font-size: 19px; font-weight: 700; }
+.jm-desc-hint { color: #9aa5a6; }
+.jm-desc-pop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: min(305px, 60%);
+  display: none;
+  padding: 9px;
+  pointer-events: none;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 10px;
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .07);
+}
+.jm-desc-pop.show { display: block; }
+.jm-actions { display: flex; gap: 12px; height: 40px; flex: none; }
+/* 只有一个「返回」：关闭图鉴（版本/贴纸移到单卡定制弹窗里选） */
+.jm-back {
+  flex: 1;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--c-blue);
+  color: var(--c-white);
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .3);
+  transition: filter .08s, transform .08s, box-shadow .08s;
+}
+.jm-back:hover { filter: brightness(1.08); }
+.jm-back:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+
 /* ---------- 窄屏适配 ---------- */
-/* 参数面板换行到卡组下方（右侧放不下时） */
+/* 参数面板换行到卡组下方（右侧放不下时）：恢复纵向 flex，小丑牌入口改全宽 */
 @media (max-width: 920px) {
-  .switchers { flex-direction: column; gap: 20px; }
+  .switchers { display: flex; flex-direction: column; gap: 20px; }
+  .switchers > .jokers-entry { margin-left: 0; width: 100%; }
 }
 @media (max-width: 880px) {
   /* 扑克详情弹窗：窄屏缩小牌面与两侧列，按钮等分铺满 */
