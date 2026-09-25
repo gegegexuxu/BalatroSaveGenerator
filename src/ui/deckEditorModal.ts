@@ -121,10 +121,10 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
     renderCards(cards);
   });
 
-  const backBtn = h('button', { class: 'deck-editor-back', text: '保存' });
+  const backBtn = h('button', { class: 'deck-editor-back', text: '返回' });
   backBtn.addEventListener('click', close);
 
-  const createBtn = h('button', { class: 'deck-editor-create', text: '创建卡牌' });
+  const createBtn = h('button', { class: 'deck-editor-create', text: '自定义新卡' });
   createBtn.addEventListener('click', () => opts.openCreateCard({
     onCreate: draft => applyEdit({ type: 'create', card: draft }),
   }));

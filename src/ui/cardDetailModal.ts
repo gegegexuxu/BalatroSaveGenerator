@@ -1,7 +1,7 @@
 // 扑克详情弹窗：中间展示牌面，左右五组切换箭头（点数/花色/增强/蜡封/版本）
 // 编辑只作用于副本，出口按钮按模式区分：
-//   mode='edit'   → 取消 / 创建新的 / 确定（确定才写回被点的那张）
-//   mode='create' → 取消 / 创建新的（无「确定」）
+//   mode='edit'   → 创建新的 / 返回（返回即自动保存：草稿写回被点的那张）
+//   mode='create' → 创建新的 / 返回（返回不落盘）
 // 版本（闪箔/镭射/多彩/负片）由 ui/cardShader.ts 移植的 shader 实时预览（项目规范 §5.7）
 import { h } from './dom';
 import { playingCard, RANK_ORDER, SUIT_ORDER, SUIT_ZH } from './playingCard';
@@ -18,7 +18,7 @@ export interface CardDetailOptions {
   /** 编辑模式下为被点的牌；创建模式下为新建牌的初值（通常 blankCard()） */
   card: DeckCard;
   mode: 'edit' | 'create';
-  /** edit 模式专属：点「确定」时先把草稿写回 card，再回调 */
+  /** edit 模式专属：「返回」时已先把草稿写回 card，再回调 */
   onConfirm?: () => void;
   /** 点「创建新的」：按当前草稿新增一张（不影响原有牌） */
   onCreate: (draft: DeckCard) => void;
@@ -40,7 +40,7 @@ const RANK_LIST: RankChar[] = [...RANK_ORDER].reverse();
 const rankLabel = (r: string): string => (r === 'T' ? '10' : r);
 
 export function createCardDetailModal(): CardDetailModal {
-  let card: DeckCard | undefined;     // 原牌对象（edit 模式：确定时写回）
+  let card: DeckCard | undefined;     // 原牌对象（edit 模式：返回时写回；create 模式为不入牌堆的 blankCard()）
   let draft: DeckCard | undefined;    // 编辑副本
   let confirm: () => void = () => {};
   let create: (draft: DeckCard) => void = () => {};
@@ -56,7 +56,7 @@ export function createCardDetailModal(): CardDetailModal {
   const editionVal = h('span', { class: 'cd-value' });
   const cardCell = h('div', { class: 'cd-card-cell' });
 
-  /** 箭头只改草稿：牌堆要等「确定」/「创建新的」才落盘 */
+  /** 箭头只改草稿：牌堆要等「返回」（写回）/「创建新的」才落盘 */
   function changed(): void {
     render();
   }
@@ -89,9 +89,19 @@ export function createCardDetailModal(): CardDetailModal {
     cardCell,
   ]);
 
-  /** 写回原牌对象（保持引用不变，牌组编辑器据此重绘）并通知外部 */
-  const okBtn = h('button', { class: 'cd-btn cd-confirm', text: '确定' });
-  okBtn.addEventListener('click', () => {
+  /** 新增一张，原有牌不受影响 */
+  const createBtn = h('button', { class: 'cd-btn cd-create', text: '创建' });
+  createBtn.addEventListener('click', () => {
+    if (!draft) return;
+    const made = { ...draft };
+    close();
+    create(made);
+  });
+
+  /** 返回 = 自动保存：草稿写回原牌对象（保持引用不变，牌组编辑器据此重绘）并通知外部。
+   *  创建模式下 card 是不入牌堆的 blankCard()、confirm 为空操作，写回无副作用。 */
+  const backBtn = h('button', { class: 'cd-btn cd-cancel', text: '返回' });
+  backBtn.addEventListener('click', () => {
     if (!card || !draft) return;
     card.suit = draft.suit;
     card.rank = draft.rank;
@@ -102,30 +112,15 @@ export function createCardDetailModal(): CardDetailModal {
     confirm();
   });
 
-  /** 新增一张，原有牌不受影响 */
-  const createBtn = h('button', { class: 'cd-btn cd-create', text: '创建新的' });
-  createBtn.addEventListener('click', () => {
-    if (!draft) return;
-    const made = { ...draft };
-    close();
-    create(made);
-  });
-
-  const cancelBtn = h('button', { class: 'cd-btn cd-cancel', text: '取消' });
-  cancelBtn.addEventListener('click', close);
-
-  const titleEl = h('div', { class: 'cd-title', text: '扑克详情' });
-
   const panel = h('div', { class: 'card-detail' }, [
-    titleEl,
     h('div', { class: 'cd-body' }, [
       grid,
-      h('div', { class: 'cd-actions' }, [cancelBtn, createBtn, okBtn]),
+      h('div', { class: 'cd-actions' }, [createBtn, backBtn]),   // 返回固定最右
     ]),
   ]);
 
   const overlay = h('div', { class: 'modal-overlay cd-overlay' }, [panel]);
-  // 点遮罩关闭 = 取消（丢弃草稿）
+  // 点遮罩关闭 = 丢弃草稿（不保存；保存只走「返回」）
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
   /** 值槽：有物品时用游戏配色填充（create_badge：底色 = 物品色、文字纯白），无物品时回到中性深色槽。
@@ -176,8 +171,8 @@ export function createCardDetailModal(): CardDetailModal {
       draft = { ...opts.card };            // 编辑副本：确定/创建才落到牌堆，取消即丢弃
       confirm = opts.onConfirm ?? (() => {});
       create = opts.onCreate;
-      titleEl.textContent = opts.mode === 'edit' ? '扑克详情' : '创建卡牌';
-      okBtn.style.display = opts.mode === 'edit' ? '' : 'none';   // 创建模式没有「确定」
+      backBtn.textContent = opts.mode === 'edit' ? '保存并返回' : '返回';   // 创建模式的返回不落盘
+      createBtn.textContent = opts.mode === 'edit' ? '复制' : '创建';       // 编辑模式=复制当前牌（原牌不动）
       render();
       overlay.classList.add('show');
     },
