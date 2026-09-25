@@ -85,6 +85,17 @@ body::before {
       rgba(0, 0, 0, .34) 100%);
 }
 
+/* #app 是 body（flex）的子项：flex 项默认 min-width:auto，会拒绝收缩到内容最小宽度
+   （≈616px，由 .selector-row 的箭头+508px stage 决定）以下 —— 手机竖屏（~390px）整页
+   随之溢出、又因 body 居中而两侧被裁。解除最小宽度并显式占满一行，窄屏才能按视口收缩；
+   body 原本的 justify-content:center 也随之挪到这里（#app 已占满 body 一行）。 */
+#app {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -1583,6 +1594,8 @@ body::before {
 @media (max-width: 920px) {
   .switchers { display: flex; flex-direction: column; gap: 20px; }
   .switchers > .jokers-entry { margin-left: 0; width: 100%; }
+  /* 单列模式下参数面板不再固定 258px：与上下相邻的种子条/优惠券入口同宽对齐 */
+  .run-params { width: auto; max-width: none; }
 }
 @media (max-width: 880px) {
   /* 扑克详情弹窗：窄屏缩小牌面与两侧列，按钮等分铺满 */
@@ -1607,4 +1620,44 @@ body::before {
   .switchers-col { width: 100%; min-width: 0; }
   .deck-editor-ranks { display: none; }
   .deck-editor-cards { overflow-x: auto; }
+  /* 视口 <648px 时「两箭头 + 508px 框体」必然放不下：允许框体收缩（箭头 flex:none 不缩，
+     框体内 info-panel min-width:0 吸收收缩量），避免整行溢出把页面撑出横向滚动 */
+  .stage { flex-shrink: 1; min-width: 0; }
+}
+
+/* ---------- 手机竖屏（~≤480px）---------- */
+/* 牌组/赌注框体内改纵向：牌面（筹码）在上居中、描述框在下占满整行 —— 横排时描述区
+   只剩 ~100px 无法阅读。箭头同步收窄，给框体让出宽度。 */
+@media (max-width: 480px) {
+  .selector-row { gap: 8px; }
+  .arrow-btn { width: 40px; height: 60px; font-size: 20px; }
+  .arrow-btn-sm { height: 56px; }
+  .stage { padding: 10px 12px; }
+  .stage-inner { flex-direction: column; gap: 10px; }
+  .deck-img { width: 110px; }
+  .info-desc { font-size: 16px; }
+  .info-desc-compact p { font-size: 15px; }
+}
+
+/* ---------- 手机端弹窗（~≤600px）---------- */
+/* 扑克/小丑详情弹窗：五列栅格（组名|◀|牌面|▶|当前值）在手机上放不下（最少 ~530px），
+   改为牌面独占首行、每组占一行「组名 ◀ ▶ 当前值」。牌面栅格子元素显式定位在首行，
+   其余子元素按 DOM 顺序自动流成 5 行，无需改 JS。 */
+@media (max-width: 600px) {
+  .cd-grid { grid-template-columns: minmax(0, 1fr) 40px 40px minmax(0, 1fr); gap: 10px; }
+  .cd-card-cell { grid-column: 1 / -1; grid-row: 1; }
+  .joker-detail .cd-card-cell { grid-row: 1; }   /* 覆盖基础样式的 span 3（同特异度、靠书写顺序取胜） */
+  .cd-group { font-size: 16px; justify-self: start; }
+  .cd-value { font-size: 16px; padding: 6px 8px; }
+  .cd-arrow { width: 40px; height: 40px; font-size: 16px; }
+  .cd-body { padding: 14px 14px 10px; }
+  /* 图鉴弹窗：页签行缩进与页签内边距收紧，四个稀有度页签在 ~390px 内放下一行 */
+  .cm-tabs, .jm-tabs { padding-left: 0; }
+  .cm-tab, .jm-tab { padding: 0 12px; font-size: 16px; }
+  /* 牌组编辑弹窗：侧栏（223px 定宽）与牌堆区改纵向堆叠 */
+  .deck-editor-body { flex-direction: column; }
+  .deck-editor-side { width: auto; }
+  /* 操作行收窄：5 字按钮在剩余宽度里放不下会折行溢出，缩字号 + 禁折行，重置键让宽 */
+  .deck-editor-reset { width: 96px; font-size: 18px; }
+  .deck-editor-create, .deck-editor-back { font-size: 18px; white-space: nowrap; }
 }
