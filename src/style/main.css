@@ -569,10 +569,43 @@ body::before {
 }
 .modal-body ol { padding-left: 24px; }
 .modal-body b { color: var(--c-money); }
-.modal-warn {
-  color: var(--c-joker-grey);
+/* 使用说明弹窗（.usage）：标题居中 + 两个小节 + 警示条；金/橙强调色取自页面主色变量。
+   窄屏内容高度可能超过视口：盒体限高为遮罩内可用高度，仅正文滚动，「知道了」始终可见 */
+.usage {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 40px);   /* 遮罩上下各 20px padding */
+}
+.usage .modal-body { overflow: auto; }
+.usage .usage-title {
+  font-size: 22px;
+  letter-spacing: 1px;
+  text-align: center;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, .4);
+}
+.usage .usage-sub {
+  text-align: center;
   font-size: 14px;
-  margin-top: 10px;
+  color: var(--c-joker-grey);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .4);
+  margin-top: 2px;
+}
+.usage .usage-sec {
+  margin: 14px 0 4px;
+  font-size: 15px;
+  color: var(--c-money);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .4);
+}
+.usage ul { padding-left: 20px; }
+.usage .modal-alert {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-left: 4px solid var(--c-important);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .25);
+  color: var(--c-important);
+  font-size: 14px;
+  line-height: 1.6;
 }
 .modal-actions {
   display: flex;
