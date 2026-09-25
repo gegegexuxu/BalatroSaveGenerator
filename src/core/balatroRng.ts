@@ -72,6 +72,12 @@ export class RunRng {
     this.chains.set(key, v);
     return (v + this.hashedSeed) / 2;
   }
+
+  /** 当前各 key 的链值快照（= G.GAME.pseudorandom 的流缓存；seed/hashed_seed 不在内）。
+   *  游戏里掷点后链值就存在该表中随存档持久化，后续同 key 掷点从此续流 */
+  snapshot(): Record<string, number> {
+    return Object.fromEntries(this.chains);
+  }
 }
 
 /** pseudorandom_element：从 n 个元素里等概率取一个，返回 0 基下标 */

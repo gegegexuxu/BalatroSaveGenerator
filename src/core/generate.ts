@@ -7,6 +7,7 @@ import { deflateSave } from './deflate';
 import { validateSave } from './validate';
 import { applyConsumablesToSave, applyDeckToSave, applyJokersToSave, applyVouchersToSave, type ConsumablesSpec, type JokersSpec, type VouchersSpec } from './saveDeck';
 import { deckDefaultVouchers } from './vouchers';
+import { applyRunStartRolls } from './runStartRolls';
 import type { DeckCard } from './deckGen';
 
 export const MIN_STAKE = 1;
@@ -210,6 +211,13 @@ export function generateSave(
     const uv = (root.get('GAME') as LuaTable).get('used_vouchers');
     if (uv instanceof LuaTable && uv.entries.size > 0) applyVouchersToSave(root, def, { keys: [] });
   }
+
+  // 新开局预掷（game.lua:2166-2181 if not saveTable）：第一底注的 Boss/商店券/跳过标签
+  // 随种子重掷——模板里是模板种子的掷点，不重掷则所有导出存档这三个值相同且与种子脱节；
+  // 覆盖种子缺省时即模板种子，重掷结果应与模板逐位一致（roundtrip 门禁测试对账）
+  const game = root.get('GAME') as LuaTable;
+  applyRunStartRolls(root, init?.seed
+    ?? ((game.get('pseudorandom') as LuaTable).get('seed') as string));
 
   validateSave(root);
   return deflateSave(serializeLua(root));

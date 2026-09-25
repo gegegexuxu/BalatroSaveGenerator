@@ -449,6 +449,13 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
   - `pseudorandom_element` 的候选表按 key 字符串序（花色 C<D<H<S，点数 2..9 < A < J < K < Q < T）；`pseudoshuffle` 先按 `sort_id` 归位再 Fisher–Yates。
 - **牌组组成**：普通牌组 52 张；废弃牌组按 `no_faces` 过滤人头牌 → 40 张；方格牌组梅花→黑桃、方块→红桃（26+26）；古怪牌组逐张 `pseudorandom_element(P_CARDS, pseudoseed('erratic'))` 抽 52 次（与游戏同源）。
 - **牌堆顺序**：复刻 `game.lua:2383 self.deck:shuffle()` —— 建牌序（按 `s..r` 字符串序）经 `pseudoshuffle(pseudoseed('shuffle'))` 洗牌，与真机同 seed 的开局牌堆顺序一致（牌堆顺序不影响玩法：进入回合时游戏会以 `pseudoseed('nr'..ante)` 重洗，`state_events.lua:344`）。
+- **新开局预掷复刻**（`core/runStartRolls.ts` + `src/data/runPools.ts`，extractData 第 10 节）：game.lua:2166-2181 仅在新开局（`if not saveTable`）掷一次 **第一底注的 Boss 盲注**（`get_new_boss` → `blind_choices.Boss`）、**商店优惠券**（`get_next_voucher_key` → `current_round.voucher`）与 **小盲/大盲跳过标签**（`get_next_tag_key`×2 → `blind_tags`），读档时原样采用存档值、不重掷——模板里的这三个值是模板种子的掷点残留，改种子后必须按新种子重掷，否则所有导出存档的第一大关完全相同：
+  - Boss 池 = 非终局（showdown=false）且 `boss.min ≤ 1` 的 8 个，按键字符串排序等概率取一（开局 `bosses_used` 全 0，最少使用过滤后无剔除）；掷中后 `bosses_used` +1（模板残留的非零计数先归零再写）；
+  - 券池 = 全部 32 张按 order 升序：16 基础券可用，16 plus 券因开局 `used_vouchers` 为空（requires 未满足）恒为 UNAVAILABLE 占位（与档案解锁状态无关，池长恒定）；
+  - 标签池 = 24 张按 order 升序：9 张 `min_ante=2` 占位；`requires` 的中心按已发现处理（存档不含图鉴发现状态，模板捕获者进度即全发现，掷点结果落盘后读档不再复核）；
+  - 重采样：命中 UNAVAILABLE 依次用 `<池键>_resample2/3…` 重掷（占位条目保留在池中，步进与游戏一致）；
+  - 消费后的流缓存（`boss`/`Voucher1`/`Tag1`/重采样键）**写回存档 pseudorandom**，游戏内后续同 key 掷点（第二底注起）据此续流；
+  - 对账门禁：模板种子 `7C95TXA7` 下重掷结果必须与模板逐位一致（`generateSave('b_red')` 整存档还原模板 + `test/runStartRolls.test.ts` 逐值对账）。
 - **校验向量**（均来自外部参考实现/实测数据，落在 `test/deckGen.test.ts`）：`random(1.0)=0.3238105623786367`；`pseudohash('erratic')=0.45752552206801056`；种子 `11153DRU` → K 17 张 / 方块 19 张；`8778L6US` → 红桃 39 张；`77XX2TEK` → 4 共 20 张 + 黑桃 38 张；坏种子 `7LB2WVPK`（`pseudohash` 溢出成 NaN → 随机流定死）→ 整副 52 张黑桃 10。
 - **「修改牌组」弹窗**：展示当前工作牌堆（按花色/点数分组统计），底部「重置」按钮按**当前牌组规则 + 当前种子**重建默认牌堆（古怪牌组按种子随机生成）。**切换牌组、修改种子都不会自动刷新牌堆**（避免覆盖已有牌堆）；工作牌堆与所选牌组不一致时由导出提示标注「牌堆未重置」。牌面按行宽自适应重叠（见 §3.3），牌多时不撑破牌区。
 
