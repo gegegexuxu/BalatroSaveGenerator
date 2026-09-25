@@ -265,7 +265,7 @@ function refreshVouchers(): void {
   vouchersEntry.render(items);
 }
 
-/** 牌堆手工编辑：右键删除；左键详情里的属性改动（type='modify'，牌对象已就地改好）；
+/** 牌堆手工编辑：左键快速删除；右键详情里的属性改动（type='modify'，牌对象已就地改好）；
  *  「创建新的」新增一张（type='create'，不影响原有牌） */
 function editDeck({ type, card }: CardEditAction): DeckCard[] {
   if (type === 'modify') {
@@ -344,7 +344,7 @@ function exportSave(): void {
 exportBtn.addEventListener('click', exportSave);
 helpBtn.addEventListener('click', () => modal.open());
 
-// 全站屏蔽浏览器右键菜单：右键在卡牌上是「快速删除」，菜单弹出会打断操作。
+// 全站屏蔽浏览器右键菜单：右键在卡牌上是「查看详情」，菜单弹出会打断操作。
 // 输入框内保留系统菜单（右键粘贴仍可用）
 document.addEventListener('contextmenu', e => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

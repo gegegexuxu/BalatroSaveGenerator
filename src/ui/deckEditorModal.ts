@@ -1,5 +1,5 @@
 // 牌组编辑弹窗：复刻游戏 run setup 的「完整牌组」视图，展示工作牌堆（core/deckGen）
-// 交互：左键查看/修改单张、右键删除、底部「重置」按牌组规则重建（不自动刷新）
+// 交互：左键快速删除、右键查看/修改单张（与主页面入口的左键移除统一）、底部「重置」按牌组规则重建（不自动刷新）
 import type { BackDef } from '../data/backs';
 import { h, renderDescLine } from './dom';
 import { playingCard, SUIT_ORDER, RANK_ORDER, FACE_RANKS } from './playingCard';
@@ -17,7 +17,7 @@ export interface DeckEditorModal {
   isOpen(): boolean;
 }
 
-/** 牌面编辑动作：左键查看详情（在弹窗内改属性）/ 右键删除 / 创建新牌 */
+/** 牌面编辑动作：左键快速删除 / 右键查看详情（在弹窗内改属性）/ 创建新牌 */
 export interface CardEditAction {
   type: 'delete' | 'modify' | 'create';
   card: DeckCard;
@@ -79,13 +79,14 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
       .map(g => h('div', { class: 'deck-suit-row' },
         g.list.map(card => {
           const el = playingCard(card);
-          el.addEventListener('click', () => opts.openCardDetail(card, {
-            onConfirm: () => applyEdit({ type: 'modify', card }),
-            onCreate: draft => applyEdit({ type: 'create', card: draft }),
-          }));
+          // 左键删除与主页面消耗牌/小丑牌/优惠券入口的左键移除一致；右键打开详情
+          el.addEventListener('click', () => applyEdit({ type: 'delete', card }));
           el.addEventListener('contextmenu', e => {
             e.preventDefault();   // 屏蔽浏览器右键菜单
-            applyEdit({ type: 'delete', card });
+            opts.openCardDetail(card, {
+              onConfirm: () => applyEdit({ type: 'modify', card }),
+              onCreate: draft => applyEdit({ type: 'create', card: draft }),
+            });
           });
           return el;
         })) as HTMLDivElement);
@@ -139,7 +140,7 @@ export function createDeckEditorModal(opts: DeckEditorOptions): DeckEditorModal 
 
   const panel = h('div', { class: 'deck-editor' }, [
     body,
-    h('div', { class: 'deck-editor-hint', text: '左键卡牌查看详情，右键卡牌快速删除' }),
+    h('div', { class: 'deck-editor-hint', text: '左键卡牌快速删除，右键卡牌查看详情' }),
     actions,
   ]);
 
