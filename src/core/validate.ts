@@ -1,6 +1,7 @@
 // 生成前结构断言（PROJECT_SPEC.md 5.8）：断言失败直接抛错，不产出文件
 import { LuaTable } from './luaTable';
 import { EDITIONS } from '../data/cardMods';
+import { VOUCHERS } from '../data/vouchers';
 import { EDITION_VALUE_FIELD } from './saveDeck';
 
 function need(cond: unknown, msg: string): void {
@@ -21,6 +22,38 @@ export function validateSave(root: LuaTable): void {
   need(blindAnte === undefined || blindAnte === rr.get('ante'),
     `round_resets.blind_ante(${blindAnte}) 应与 ante(${rr.get('ante')}) 一致`);
 
+  // 优惠券（v3）：used_vouchers 键形态、升级对完整性、结构效果的衍生计数（后面各区断言用）
+  const usedVouchers = (() => {
+    const uv = g.get('used_vouchers');
+    const keys = new Set<string>();
+    if (uv instanceof LuaTable) {
+      for (const [key] of uv.entries) {
+        need(typeof key === 'string' && key.startsWith('v_'), `used_vouchers 的键应为 v_* key（当前 ${String(key)}）`);
+        keys.add(key as string);
+      }
+    }
+    return keys;
+  })();
+  const svc = g.get('starting_voucher_count');
+  need(svc === undefined || svc === usedVouchers.size,
+    `starting_voucher_count(${svc}) 应等于 used_vouchers 数量(${usedVouchers.size})`);
+  for (const key of usedVouchers) {
+    const def = VOUCHERS.find(v => v.key === key);
+    need(def !== undefined, `used_vouchers 含未知券 ${key}`);
+    for (const req of def!.requires) {
+      need(usedVouchers.has(req), `plus 券 ${key} 的基础券 ${req} 应同时在 used_vouchers 中`);
+    }
+  }
+  // 结构效果衍生计数（各区 card_limit 断言用；水晶球 +1 消耗区 / 反物质 +1 小丑区，见 5.10）
+  const crystalBall = usedVouchers.has('v_crystal_ball') ? 1 : 0;
+  const antimatter = usedVouchers.has('v_antimatter') ? 1 : 0;
+  const shop = g.get('shop') as LuaTable | undefined;
+  if (shop instanceof LuaTable) {
+    const overstock = (usedVouchers.has('v_overstock_norm') ? 1 : 0) + (usedVouchers.has('v_overstock_plus') ? 1 : 0);
+    need(shop.get('joker_max') === 2 + overstock,
+      `shop.joker_max(${shop.get('joker_max')}) 应为 2 + 库存过剩加成(${overstock})`);
+  }
+
   // 赌注（v0.3）：等级与效果字段必须自洽
   const stake = g.get('stake');
   need(stake === Math.trunc(stake as number) && (stake as number) >= 1 && (stake as number) <= 8,
@@ -33,7 +66,10 @@ export function validateSave(root: LuaTable): void {
     const d1 = (g.get('starting_params') as LuaTable).get('discards');
     const d2 = rr.get('discards');
     const d3 = (g.get('current_round') as LuaTable).get('discards_left');
-    need(d1 === d2 && d2 === d3, `蓝注及以上弃牌数应三处同步（${d1}/${d2}/${d3}）`);
+    // 弃牌数三处同步 + 常弃常新/回收魔法券的结构加成（rr/cr 各 +1/张，card.lua apply_to_run）
+    const waste = (usedVouchers.has('v_wasteful') ? 1 : 0) + (usedVouchers.has('v_recyclomancy') ? 1 : 0);
+    need(d2 === (d1 as number) + waste && d3 === d2,
+      `蓝注及以上弃牌数应为 起始值(${d1}) + 弃牌券(${waste}) 并三处同步（${d1}/${d2}/${d3}）`);
   }
 
   const areas = root.get('cardAreas') as LuaTable;
@@ -68,7 +104,8 @@ export function validateSave(root: LuaTable): void {
   }
 
   // 槽位数（v1.1）：starting_params 与对应牌区容量必须同步（读档时游戏不再从 starting_params 派生）。
-  // jokers / consumeables 的 card_limit 还要 +负片张数（card.lua:405-417），在各区单列断言
+  // jokers / consumeables 的 card_limit 还要 +负片张数（card.lua:405-417）与券的结构加成
+  // （水晶球 +1 消耗区 / 反物质 +1 小丑区，Card.apply_to_run 的等价落盘，见 5.10），在各区单列断言
   const sp = g.get('starting_params') as LuaTable;
 
   // 小丑牌区（v2）：结构按附录 D.3；版本含 闪箔/镭射/多彩/负片；card_limit = 槽位数 + 负片张数
@@ -125,8 +162,8 @@ export function validateSave(root: LuaTable): void {
     }
     const jokerSlots = sp.get('joker_slots') as number;
     const jokerLimit = jokerCfg.get('card_limit') as number;
-    need(jokerLimit === jokerSlots + jokerNegCount,
-      `jokers.card_limit(${jokerLimit}) 应为 槽位数(${jokerSlots}) + 负片张数(${jokerNegCount})`);
+    need(jokerLimit === jokerSlots + jokerNegCount + antimatter,
+      `jokers.card_limit(${jokerLimit}) 应为 槽位数(${jokerSlots}) + 负片张数(${jokerNegCount}) + 反物质券(${antimatter})`);
     need(jokerCfg.get('temp_limit') === Math.max(jokerCards.entries.size, jokerLimit),
       `jokers.temp_limit(${jokerCfg.get('temp_limit')}) 应为 max(张数, card_limit)（cardarea.lua:266）`);
     need(jokerCards.entries.size - jokerNegCount <= jokerSlots,
@@ -165,8 +202,8 @@ export function validateSave(root: LuaTable): void {
   }
   const consSlots = sp.get('consumable_slots') as number;
   const consLimit = consCfg.get('card_limit') as number;
-  need(consLimit === consSlots + negativeCount,
-    `consumeables.card_limit(${consLimit}) 应为 槽位数(${consSlots}) + 负片张数(${negativeCount})`);
+  need(consLimit === consSlots + negativeCount + crystalBall,
+    `consumeables.card_limit(${consLimit}) 应为 槽位数(${consSlots}) + 负片张数(${negativeCount}) + 水晶球券(${crystalBall})`);
   need(consCfg.get('temp_limit') === Math.max(consCards.entries.size, consLimit),
     `consumeables.temp_limit(${consCfg.get('temp_limit')}) 应为 max(张数, card_limit)（cardarea.lua:266）`);
   need(consCards.entries.size - negativeCount <= consSlots,

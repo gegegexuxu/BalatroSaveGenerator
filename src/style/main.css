@@ -432,6 +432,11 @@ body::before {
   flex: none;
   min-width: 0;
 }
+/* 两列都拉伸到网格行高（行高 = 两列较高者）：列末的入口贴底 —— 优惠券入口（右列随内容
+   自然贴底）与消耗牌入口（左列 flex:1 吸收剩余高度）的底边始终对齐，谁高谁定行高
+   （移动端单列布局下无拉伸关系，此规则自然失效） */
+.switchers > .run-params-col,
+.switchers > .switchers-col { align-self: stretch; }
 .seed-tile {
   background: var(--c-black);
   border: 2px solid var(--c-grey);
@@ -556,13 +561,6 @@ body::before {
   box-shadow: 0 8px 0 rgba(0, 0, 0, .35),
               inset 0 2px 0 rgba(255, 255, 255, .08);
   overflow: hidden;
-}
-.modal-title {
-  background: var(--c-black);
-  padding: 13px 20px;
-  font-size: 22px;
-  text-shadow: 2px 2px 0 rgba(0, 0, 0, .45);
-  border-bottom: 2px solid var(--c-grey);
 }
 .modal-body {
   padding: 20px 22px 6px;
@@ -983,6 +981,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 7px;                 /* > 按钮的 5px 硬阴影，避免压到下方黑块顶边 */
+  flex: 1 1 auto;           /* 左列被拉伸时吸收剩余高度：底边与右列优惠券入口对齐（见 .switchers） */
   width: 508px;
   max-width: 100%;
   background: var(--c-lblack);
@@ -998,6 +997,7 @@ body::before {
 .ce-cards {
   display: flex;
   align-items: center;
+  flex: 1;                  /* 吸收入口被拉伸后的剩余高度，黑块随之变高（观感同 .vo-cards） */
   min-height: 158px;        /* 150px 牌高 + 上下各 4px 内边距：没牌时也保持黑块高度 */
   padding: 4px;
   overflow: hidden;
@@ -1455,6 +1455,95 @@ body::before {
 }
 .jm-back:hover { filter: brightness(1.08); }
 .jm-back:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+
+/* ---------- 优惠券入口（右列参数面板下方 = 消耗牌右侧的空白区）----------
+   券无槽位上限（used_vouchers 集合语义），头部只有数量；已选券小图两行横排（上下均分），
+   每行券多时收缩步进重叠（同消耗牌入口，--step 由 vouchersEntry.ts 按行写入），左键移除。
+   入口 flex:1 参与右列拉伸：吸收列内剩余高度使面板底边贴住列底（底边与消耗牌入口对齐），
+   黑底券区 flex:1 随面板变高，两行在其内均分。
+   「新增优惠券」按钮用 G.C.VOUCHER 的券系配色（#cb724c）。 */
+.vouchers-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: 1 1 auto;
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 8px 12px 9px;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+.vo-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vo-head { font-size: 18px; color: var(--c-white); }
+.vo-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;                 /* 两行券的行距 */
+  flex: 1;                  /* 吸收入口被拉伸后的剩余高度，黑块随之变高 */
+  min-height: 200px;        /* 两行券高（2×94 + 行距 4 + 上下各 4px 内边距）：没券时也保持黑块高度 */
+  padding: 4px;
+  overflow: hidden;
+  background: var(--c-black);
+  border-radius: 6px;
+}
+.vo-row {
+  display: flex;
+  align-items: center;
+  flex: 1;                  /* 两行均分黑块高度 */
+  min-height: 0;
+}
+.vo-card {
+  position: relative;
+  flex: none;
+  width: 70px;
+  height: 94px;             /* 142:190 原比例 */
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, .18);
+}
+/* 行内横排，券多时步进由 ts 按行内可用宽度收缩（--step）：默认步进 76 ⇒ 相邻留 6px 间隙 */
+.vo-row .vo-card + .vo-card { margin-left: calc(var(--step, 76px) - 70px); }
+.vo-card:hover { z-index: 1; outline: 2px solid var(--c-orange); outline-offset: 1px; }   /* 悬浮抬高，避免被右侧券盖住（同 .ce-card:hover） */
+.vo-img { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.vo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  background: var(--c-black);
+  border: 2px solid var(--c-grey);
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+}
+.vo-edit {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 17px;
+  background: #cb724c;      /* G.C.VOUCHER（globals.lua），券系专属配色 */
+}
+
+/* ---------- 优惠券图鉴弹窗（v3）----------
+   容器与消耗牌/小丑图鉴同款（jm- 版式类直接复用）；单牌池无页签，已拥有置灰。 */
+.vouchers-modal {
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--c-lblack);
+  border: 2px solid var(--c-grey);
+  border-radius: 12px;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, .35),
+              inset 0 2px 0 rgba(255, 255, 255, .08);
+}
+/* 已拥有的券：半透明置灰，点击仅提示（used_vouchers 集合语义，不可重复选） */
+.vo-owned { opacity: .35; cursor: default; }
+.vo-owned:hover { outline: none; }
 
 /* ---------- 窄屏适配 ---------- */
 /* 参数面板换行到卡组下方（右侧放不下时）：恢复纵向 flex，小丑牌入口改全宽 */

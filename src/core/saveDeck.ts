@@ -10,6 +10,8 @@ import { type ConsumableDef } from '../data/consumables';
 import { type JokerDef } from '../data/jokers';
 import { consumableByKey, type ConsumableItem } from './consumables';
 import { jokerByKey, PERISHABLE_ROUNDS, type JokerItem } from './jokers';
+import { deckDefaultVouchers, voucherByKey, withRequiredBases } from './vouchers';
+import { VOUCHERS } from '../data/vouchers';
 import type { BackDef } from '../data/backs';
 import type { DeckCard } from './deckGen';
 
@@ -21,6 +23,11 @@ export interface ConsumablesSpec {
 /** 开局小丑牌规格：items = 区内顺序（每张自带版本） */
 export interface JokersSpec {
   items: JokerItem[];
+}
+
+/** 开局优惠券规格：keys = 已拥有集合（used_vouchers 语义：同一张券唯一） */
+export interface VouchersSpec {
+  keys: string[];
 }
 
 const SUIT_FILE: Record<string, string> = { Spades: 'S', Hearts: 'H', Clubs: 'C', Diamonds: 'D' };
@@ -401,4 +408,139 @@ export function applyJokersToSave(root: LuaTable, spec: JokersSpec): void {
   const negCount = spec.items.filter(it => it.edition === 'negative').length;
   cfg.set('card_limit', (cfg.get('card_limit') as number) + negCount);
   cfg.set('temp_limit', Math.max(spec.items.length, cfg.get('card_limit') as number));
+}
+
+// ---------- 优惠券写入（PROJECT_SPEC.md 5.10）----------
+// 效果生效模型：续档时 Game:start_run 走 saveTable 分支原样恢复 G.GAME 与各牌区
+// （CardArea:load 直接替换 config），**不重放** Card.apply_to_run——因此：
+//   1) used_vouchers 标记：用时检查型券（望远镜/天文台/预兆球/空白券等在各自使用点读标记）靠它生效；
+//   2) 结构改写型券：必须把 apply_to_run 的效果自己写进存档状态（见 VOUCHER_EFFECTS 的逐券映射）。
+// 水晶球归此统一结算：魔法牌组规则写入的 v_crystal_ball 标记（applyConsumablesToSave）与
+// 用户自选的合并成最终拥有集合后，一次性给消耗区上限 +1——魔法牌组生成的存档因此与真机样例
+// 的 card_limit=3 精确一致（2 槽 + 1 券），原「读档后追平」的假设不成立（CardArea:load 原样恢复）。
+
+/** 逐券结构效果映射（card.lua:1880 Card.apply_to_run 的等价落盘；extra 取自券定义 config） */
+function applyVoucherEffect(root: LuaTable, key: string): void {
+  const def = voucherByKey(key);
+  if (!def) throw new Error(`未知优惠券: ${key}`);
+  const game = root.get('GAME') as LuaTable;
+  const extra = typeof def.config.extra === 'number' ? def.config.extra : 0;
+  const areaCfg = (name: string): LuaTable =>
+    ((root.get('cardAreas') as LuaTable).get(name) as LuaTable).get('config') as LuaTable;
+  const bumpLimit = (name: string, n: number): void => {
+    const cfg = areaCfg(name);
+    cfg.set('card_limit', (cfg.get('card_limit') as number) + n);
+    cfg.set('temp_limit', (cfg.get('temp_limit') as number) + n);
+  };
+  switch (def.enName) {
+    case 'Crystal Ball':
+      bumpLimit('consumeables', 1);                                  // 消耗区上限 +1
+      break;
+    case 'Antimatter':
+      bumpLimit('jokers', 1);                                        // 小丑区上限 +1
+      break;
+    case 'Grabber':
+    case 'Nacho Tong':
+      bump(game, 'round_resets', 'hands', extra);                    // 每回合出牌 +1
+      bump(game, 'current_round', 'hands_left', extra);
+      break;
+    case 'Wasteful':
+    case 'Recyclomancy':
+      bump(game, 'round_resets', 'discards', extra);                 // 每回合弃牌 +1
+      bump(game, 'current_round', 'discards_left', extra);
+      break;
+    case 'Paint Brush':
+    case 'Palette':
+      bumpLimit('hand', 1);                                          // 手牌上限 +1
+      break;
+    case 'Reroll Surplus':
+    case 'Reroll Glut':
+      bump(game, 'round_resets', 'reroll_cost', -extra);             // 重掷费 -extra
+      bumpClamped(game, 'current_round', 'reroll_cost', -extra);     // 当前回合不小于 0（card.lua 重掷同款）
+      break;
+    case 'Tarot Merchant':
+    case 'Tarot Tycoon':
+      game.set('tarot_rate', 4 * extra);                             // 塔罗出现率倍率
+      break;
+    case 'Planet Merchant':
+    case 'Planet Tycoon':
+      game.set('planet_rate', 4 * extra);
+      break;
+    case 'Hone':
+    case 'Glow Up':
+      game.set('edition_rate', extra);                               // 版本出现率倍率
+      break;
+    case 'Magic Trick':
+    case 'Illusion':
+      game.set('playing_card_rate', extra);                          // 卡牌包出现率倍率
+      break;
+    case 'Clearance Sale':
+    case 'Liquidation':
+      game.set('discount_percent', extra);                           // 商店折扣 %
+      break;
+    case 'Seed Money':
+    case 'Money Tree':
+      game.set('interest_cap', extra);                               // 利息上限 $
+      break;
+    case 'Overstock':
+    case 'Overstock Plus':
+      bumpShopSize(game, extra > 1 ? 2 : 1);                         // 商店卡位数（overstock +1 / plus 共 +2）
+      break;
+    case 'Telescope':
+    case 'Observatory':
+    case 'Omen Globe':
+    case 'Blank':
+      break;                                                          // 用时检查型：仅 used_vouchers 标记
+    default:
+      throw new Error(`优惠券 ${key}（${def.enName}）缺少落盘效果映射`);
+  }
+}
+
+function bump(game: LuaTable, tableName: string, key: string, delta: number): void {
+  const t = game.get(tableName) as LuaTable;
+  t.set(key, (t.get(key) as number) + delta);
+}
+function bumpClamped(game: LuaTable, tableName: string, key: string, delta: number): void {
+  const t = game.get(tableName) as LuaTable;
+  t.set(key, Math.max(0, (t.get(key) as number) + delta));
+}
+/** 商店卡位数（Overstock）：G.GAME.shop.joker_max（change_shop_size 的等价落盘） */
+function bumpShopSize(game: LuaTable, n: number): void {
+  const shop = game.get('shop') as LuaTable;
+  shop.set('joker_max', (shop.get('joker_max') as number) + n);
+}
+
+/**
+ * 把开局优惠券写进存档：used_vouchers 集合（模板/牌组规则/用户选择合并）+ 逐券结构效果。
+ * plus 券自动带上基础券（common_events.lua:1993 的 requires 上架条件，游戏里 plus 与
+ * 基础券必然同时存在）。starting_voucher_count 仅在用户自选了券时写（= 自选数，挑战路径
+ * game.lua:2095 同款语义；牌组规则券如魔法水晶球游戏本身不写该计数，保持样例一致）。
+ */
+export function applyVouchersToSave(root: LuaTable, deck: BackDef, spec: VouchersSpec): void {
+  const game = root.get('GAME') as LuaTable;
+  let uv = game.get('used_vouchers');
+  if (!(uv instanceof LuaTable)) {
+    uv = new LuaTable();
+    game.set('used_vouchers', uv);
+  }
+  const owned = new Set<string>();
+  for (const key of deckDefaultVouchers(deck)) owned.add(key);   // 牌组自带（星云/黄道/魔法，back.lua apply_to_run）
+  for (const [key] of uv.entries) {
+    if (typeof key === 'string') owned.add(key);                 // 前置流程已写入的（魔法水晶球）
+  }
+  for (const key of withRequiredBases(spec.keys)) owned.add(key);
+
+  // 顺序应用：按游戏 order（基础券 < plus），升级效果与游戏逐张兑现的终态一致
+  for (const def of VOUCHERS) {
+    if (!owned.has(def.key)) continue;
+    applyVoucherEffect(root, def.key);
+    uv.set(def.key, true);
+  }
+  // starting_voucher_count = 最终拥有数（back.lua 牌组券与挑战路径都按此计数）
+  game.set('starting_voucher_count', uv.entries.size);
+}
+
+/** 供 main.ts 选券时补齐升级对（再包一层避免核心模块互相依赖方向混乱） */
+export function resolveVoucherKeys(keys: string[]): string[] {
+  return withRequiredBases(keys);
 }

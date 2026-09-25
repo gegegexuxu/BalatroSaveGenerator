@@ -483,6 +483,35 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 - **数据** `src/data/jokers.ts` 由提取脚本第 8 节生成：150 张 `j_*` 定义 + zh_CN 名称描述 + `card.lua` Joker UI 链逐张 `loc_vars` 的**静态求值**（开局状态：概率基数 1、动态倍率 0、X 倍率 1、牌堆 52）；取不到的占位记 null、对应描述行由界面省略，已知边界清单钉在 `test/jokers.test.ts` 的 `UNRESOLVED_ALLOWED`（每回合随机值与无 config 的硬编码小丑共 7 张，扩大 = 回退）；
 - `validate` 断言：`save_fields.center` 以 `j_` 开头、`base_cost=cost`、`sell_cost=floor(cost/2)`、`rank` 连续 1..n、edition 恰好标记一个版本且 type 一致 + 数值项 = config.extra、`card_limit = joker_slots + 负片张数`、非负片张数 ≤ 槽位。
 
+### 5.10 优惠券（v3）
+
+**✅ 已实现（v3 部分）**：`core/saveDeck.ts:applyVouchersToSave` 把最终拥有集合写进 `GAME.used_vouchers`（集合语义，键 = `v_*`、值 = true）。拥有集合 = **牌组自带券**（`core/vouchers.deckDefaultVouchers`：魔法水晶球 / 星云望远镜 / 黄道塔罗+星球商人+库存过剩，来自 `b_*` 定义的 `config.voucher`/`config.vouchers`，即 back.lua `apply_to_run` 的等价落盘）∪ 用户自选，plus 券自动补基础券；`starting_voucher_count` = 最终拥有数（back.lua:177-178/234-236 牌组券与挑战路径 game.lua:2095 都按此计数）。数据 `src/data/vouchers.ts` 由提取脚本第 9 节生成：**30 张**（16 对基础/加强券，**神形符/岩穴符不收录**——它们 `ease_ante(-1)` 回退底注，对 ante-1 存档无意义，留给起始底注功能）。UI 上牌组自带券随牌组切换派生展示、不可手动移除，自选券跨牌组保留。
+
+**效果生效模型（关键）**：续档时 `Game:start_run` 走 saveTable 分支**原样恢复** `G.GAME` 与各牌区（`CardArea:load` 直接替换 config，game.lua:2308-2311 / cardarea.lua），**不重放** `Card.apply_to_run`（card.lua:1880）。因此：
+- **用时检查型**（望远镜/天文台/预兆球/空白券——在各自使用点读 `G.GAME.used_vouchers.v_x`）：写标记即生效；
+- **结构改写型**：必须按 `apply_to_run` 把效果写进存档状态，逐券映射见 `applyVoucherEffect`：
+  | 券 | 落盘效果 |
+  |---|---|
+  | 水晶球 | consumeables.config.card_limit/temp_limit +1 |
+  | 反物质 | jokers.config.card_limit/temp_limit +1 |
+  | 抓手 / 玉米片夹 | round_resets.hands、current_round.hands_left +1（starting_params 不动，同蓝注弃牌语义） |
+  | 常弃常新 / 回收魔法 | round_resets.discards、current_round.discards_left +1 |
+  | 油漆刷 / 调色板 | hand.config.card_limit/temp_limit +1 |
+  | 多次重掷 / 加強版 | round_resets.reroll_cost −extra(2)；current_round.reroll_cost max(0,−) |
+  | 塔罗/星球商人(大亨) | GAME.tarot_rate / planet_rate = 4×extra（商人 extra=9.6/4=2.4 → 9.6；提取器支持 Lua 除法表达式） |
+  | 打磨 / 焕彩 | GAME.edition_rate = extra |
+  | 魔术 / 幻象 | GAME.playing_card_rate = extra |
+  | 清仓特卖 / 清算 | GAME.discount_percent = extra(25/50) |
+  | 种子基金 / 摇钱树 | GAME.interest_cap = extra(50/100) |
+  | 库存过剩(加强版) | GAME.shop.joker_max +1（各 +1） |
+
+- **升级对**：plus 券 `requires = {基础券}`（common_events.lua:1993 的上架条件）——选 plus 自动补基础券（`core/vouchers.withRequiredBases`），移除基础券级联移除失效 plus（`pruneBrokenRequires`）；validate 断言 plus 的基础券必须同时在集合中。
+- **validate 断言**：used_vouchers 键形态、starting_voucher_count、升级对完整、shop.joker_max = 2 + 库存过剩加成；jokers/consumeables card_limit 纳入反物质/水晶球加成；蓝注弃牌数三处同步放宽为「起始值 + 弃牌券加成」。
+- **UI**：入口挂右列参数面板下方（消耗牌右侧空白区），头部「优惠券 N」（无槽位上限）+ 券面小图两行横排（上下均分，行内券多时收缩步进重叠，同消耗牌入口），入口底边与消耗牌入口对齐（两列等高拉伸）、左键移除；图鉴单牌池 2×6 分页（复用 jm- 版式类），悬停说明框，已拥有置灰。
+
+**⚠️ 修正记录**：5.6 曾假设「魔法水晶球的 card_limit +1 由游戏读档 redeem 后追平」——经 game.lua:2308-2311（saveTable 分支）与 CardArea:load 证实**该追平不存在**，水晶球的 +1 现由 applyVouchersToSave 统一结算（魔法牌组生成的存档 card_limit=3 与真机样例精确一致，原「已知差异」消除）。
+
+
 ---
 
 ## 6. 功能范围与路线图
@@ -492,7 +521,7 @@ v1 不提供 seed 自定义，保留模板 seed `7C95TXA7`。注意两点：
 | v1（MVP） | 15 种牌组选择（魔法/幽灵待消耗品样本）→ 生成并下载 `save.jkr` + 使用说明弹窗；**赌注选择（白注~金注）** | 进行中（牌组+赌注已实现，牌组规则数值未应用） |
 | v1.1 | 基础数值自定义：金钱、手牌数、弃牌数、手牌区大小、小丑/消耗牌槽位；牌组规则落地（deckRules） | 进行中（数值与牌组数值修正已实现；牌组非数值规则待补：星云/黄道起始优惠券、幽灵出现率、绿牌组无利息） |
 | v1.2 | **卡牌「版本」**（闪箔/全息/多彩/负片）：`edition` 存档字段 + 四个 shader 的 WebGL 移植（单共享 context）+ 详情弹窗预览 | 进行中 |
-| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 进行中（**起始消耗品：已完成**——入口/弹窗/负片开关/牌组默认/存档写入（对真机样例逐字段一致）与 validate 断言均已交付，见 5.6；**起始小丑：已完成**——入口/图鉴（稀有度页签）/单卡定制弹窗（版本+永恒/易腐/租用贴纸）/存档写入（对 red_round1_jokers.jkr 逐字段一致）/数据提取（card.lua loc_vars 静态求值）/validate 断言均已交付，见 5.9；seed 自定义已实现，见 5.7 现状；8 级赌注已实现） |
+| v2 | 起始小丑（含版本：箔/镭射/多彩/负片）、起始消耗品、seed 自定义 | 进行中（**起始消耗品：已完成**——入口/弹窗/负片开关/牌组默认/存档写入（对真机样例逐字段一致）与 validate 断言均已交付，见 5.6；**起始小丑：已完成**——入口/图鉴（稀有度页签）/单卡定制弹窗（版本+永恒/易腐/租用贴纸）/存档写入（对 red_round1_jokers.jkr 逐字段一致）/数据提取（card.lua loc_vars 静态求值）/validate 断言均已交付，见 5.9；**优惠券：已完成**——图鉴/入口/升级对补齐/结构效果落盘（30 张，ante 回退券除外），见 5.10；seed 自定义已实现，见 5.7 现状；8 级赌注已实现） |
 | v3 | 进阶：牌型起始等级、优惠券、商店概率、逐张定制 52 张牌（强化/版本/印章）、起始底注 | 规划 |
 | 远期 | 解析已有存档、场景级 shader/动效增强（背景漩涡、溶解动画等；卡牌版本 shader 已单列为 v1.2） | 不承诺 |
 

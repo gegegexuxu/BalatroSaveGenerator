@@ -147,6 +147,8 @@ export function createRunParamsPanel(initial: RunInit): RunParamsPanel {
       jokerSlotsInput.value = String(initial.jokerSlots);
       consumableSlotsInput.value = String(initial.consumableSlots);
       dollarsInput.value = String(initial.dollars);
+      // 程序化赋值不触发 input/change：派发一次 change 让监听方（入口的 N/M 上限等）按新值立即重绘
+      root.dispatchEvent(new Event('change', { bubbles: true }));
     },
   };
 }

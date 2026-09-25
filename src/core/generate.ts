@@ -5,7 +5,8 @@ import templateSource from '../data/templateSource';
 import { LuaTable, parseLua, serializeLua, jsonToLua } from './luaTable';
 import { deflateSave } from './deflate';
 import { validateSave } from './validate';
-import { applyConsumablesToSave, applyDeckToSave, applyJokersToSave, type ConsumablesSpec, type JokersSpec } from './saveDeck';
+import { applyConsumablesToSave, applyDeckToSave, applyJokersToSave, applyVouchersToSave, type ConsumablesSpec, type JokersSpec, type VouchersSpec } from './saveDeck';
+import { deckDefaultVouchers } from './vouchers';
 import type { DeckCard } from './deckGen';
 
 export const MIN_STAKE = 1;
@@ -178,6 +179,7 @@ export function generateSave(
   cards?: DeckCard[],
   consumables?: ConsumablesSpec,
   jokers?: JokersSpec,
+  vouchers?: VouchersSpec,
 ): Uint8Array {
   const def = BACKS.find(b => b.key === deckKey && !b.omit);
   if (!def) throw new Error(`未知或不可选的牌组: ${deckKey}`);
@@ -200,6 +202,14 @@ export function generateSave(
   if (cards) applyDeckToSave(root, cards);
   if (consumables && consumables.items.length > 0) applyConsumablesToSave(root, def, consumables);
   if (jokers && jokers.items.length > 0) applyJokersToSave(root, jokers);
+  // 券最后结算：与消耗牌/牌组规则写入的 used_vouchers 标记合并（魔法水晶球），
+  // 只要有任何券（自选或牌组规则）就按最终拥有集合落盘结构效果
+  if ((vouchers && vouchers.keys.length > 0) || deckDefaultVouchers(def).length > 0) {
+    applyVouchersToSave(root, def, vouchers ?? { keys: [] });
+  } else {
+    const uv = (root.get('GAME') as LuaTable).get('used_vouchers');
+    if (uv instanceof LuaTable && uv.entries.size > 0) applyVouchersToSave(root, def, { keys: [] });
+  }
 
   validateSave(root);
   return deflateSave(serializeLua(root));

@@ -3,10 +3,12 @@ import { BACKS } from './data/backs';
 import { STAKES } from './data/stakes';
 import type { ConsumableDef } from './data/consumables';
 import type { JokerDef } from './data/jokers';
+import type { VoucherDef } from './data/vouchers';
 import { generateSave } from './core/generate';
 import { blankCard, defaultDeckCards, renumberDeck, type DeckCard } from './core/deckGen';
 import { deckDefaultConsumables, type ConsumableItem } from './core/consumables';
 import { canAddJoker, type JokerItem, type StickerKey } from './core/jokers';
+import { deckDefaultVouchers, pruneBrokenRequires, voucherByKey, withRequiredBases, type VoucherItem } from './core/vouchers';
 import { createDeckSwitcher } from './ui/deckSwitcher';
 import { createStakeSwitcher } from './ui/stakeSwitcher';
 import { createRunParamsPanel, deckInit } from './ui/runParamsPanel';
@@ -17,6 +19,8 @@ import { createConsumablesEntry } from './ui/consumablesEntry';
 import { createJokersModal } from './ui/jokersModal';
 import { createJokersEntry } from './ui/jokersEntry';
 import { createJokerDetailModal } from './ui/jokerDetailModal';
+import { createVouchersModal } from './ui/vouchersModal';
+import { createVouchersEntry } from './ui/vouchersEntry';
 import { createUsageModal, autoShowOnce, showToast } from './ui/usageModal';
 import { h } from './ui/dom';
 
@@ -49,6 +53,13 @@ const stickerImages = import.meta.glob('../assets/sticker/*.png', {
   query: '?url',
   import: 'default',
 }) as Record<string, string>;
+// 优惠券素材（assets/voucher/<英文名>.png，文件名含空格；Director's Cut 的资源名是 Director.png，
+// 已在提取脚本的 def.image 里落到真实文件名）
+const voucherImages = import.meta.glob('../assets/voucher/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
 const imageUrl = (enName: string): string | undefined =>
   deckImages[`../assets/decks/${enName}.png`];
@@ -58,6 +69,8 @@ const consumableUrl = (def: ConsumableDef): string | undefined =>
   consumableImages[`../assets/${def.set.toLowerCase()}/${def.image}`];
 const jokerUrl = (def: JokerDef): string | undefined =>
   jokerImages[`../assets/joker/${def.image}`];
+const voucherUrl = (def: VoucherDef): string | undefined =>
+  voucherImages[`../assets/voucher/${def.image}`];
 const jokerStickerUrl = (key: StickerKey): string | undefined =>
   stickerImages[`../assets/sticker/${key.charAt(0).toUpperCase()}${key.slice(1)}.png`];
 
@@ -91,6 +104,12 @@ let consumablesNegative = false;   // 负片开关当前状态（弹窗内切换
 // 工作小丑牌（逐牌记录）：游戏无「牌组赠送起始小丑」规则，故不随牌组切换重建，始终为空起步。
 // v2 起写入导出存档（PROJECT_SPEC.md 5.9）；版本与贴纸都是逐牌属性——加入时刻定制弹窗里的选择
 let workingJokers: JokerItem[] = [];
+// 工作优惠券（集合语义，同一张券唯一）：v3 起写入导出存档（PROJECT_SPEC.md 5.10）。
+// 两部分合成最终拥有集合：牌组自带券（星云望远镜 / 黄道三张 / 魔法水晶球，随牌组切换派生、不可移除）
+// + 用户自选（跨牌组保留）；plus 券自动补基础券，移除基础券时级联移除失效的 plus
+let pickedVouchers: VoucherItem[] = [];
+const deckVoucherKeys = (): string[] => deckDefaultVouchers(currentDeck);
+const allVoucherKeys = (): string[] => withRequiredBases([...deckVoucherKeys(), ...pickedVouchers.map(it => it.key)]);
 const runParams = createRunParamsPanel(deckInit(selectable[0], 1));
 // 「导出存档 / 使用说明」挂在右列顶部（种子组件上方，各占一行，宽度撑满参数面板列）
 runParams.root.prepend(exportBtn, helpBtn);
@@ -148,6 +167,37 @@ const jokers = createJokersModal({
 });
 // 小丑牌单卡定制弹窗：版本 / 永恒·易腐（互斥循环）/ 租用 的箭头切换
 const jokerDetail = createJokerDetailModal();
+// 优惠券弹窗（图鉴）：点未拥有的券选入工作列表并自动关闭（plus 自动补基础券）；已拥有的置灰提示
+const vouchers = createVouchersModal({
+  imageUrl: voucherUrl,
+  onPick: key => {
+    pickedVouchers = withRequiredBases([...deckVoucherKeys(), ...pickedVouchers.map(it => it.key), key])
+      .filter(k => !deckVoucherKeys().includes(k))
+      .map(k => ({ key: k }));
+    refreshVouchers();
+    const added = withRequiredBases([key]).filter(k => k !== key && !deckVoucherKeys().includes(k));
+    if (added.length) showToast(`已连带选入基础券：${added.map(k => voucherByKey(k)!.zhName).join('、')}`);
+  },
+});
+// 优惠券入口：挂在右列参数面板下方（消耗牌右侧的空白区）
+const vouchersEntry = createVouchersEntry({
+  imageUrl: voucherUrl,
+  onOpen: () => vouchers.open(allVoucherKeys().map(k => ({ key: k }))),
+  onRemove: key => {
+    if (deckVoucherKeys().includes(key)) {
+      showToast(`「${voucherByKey(key)!.zhName}」由牌组自带，无法移除`);
+      return;
+    }
+    const before = allVoucherKeys();
+    pickedVouchers = pruneBrokenRequires([...deckVoucherKeys(), ...pickedVouchers.map(it => it.key).filter(k => k !== key)])
+      .filter(k => !deckVoucherKeys().includes(k))
+      .map(k => ({ key: k }));
+    refreshVouchers();
+    const removed = before.filter(k => !allVoucherKeys().includes(k));
+    if (removed.length) showToast(`已移除「${removed.map(k => voucherByKey(k)!.zhName).join('、')}」`);
+  },
+});
+runParams.root.append(vouchersEntry.root);
 // 小丑牌入口：挂在消耗牌入口下方，横跨左列与右列下方（左缘对齐消耗牌入口、右缘对齐种子组件）
 const jokersEntry = createJokersEntry({
   capacity: () => runParams.values().jokerSlots,
@@ -172,6 +222,7 @@ const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
   currentDeck = def;
   runParams.refresh(def, currentStake);
   rebuildConsumables();   // 消耗牌是牌组派生状态，与参数面板一起随牌组切换
+  refreshVouchers();      // 牌组自带券同理随牌组派生（自选券保留）
   // 牌堆保持原样（不自动按新牌组重建）；弹窗开着时只同步牌组名与描述
   if (deckEditor.isOpen()) deckEditor.open(def, workingCards);
   if (consumables.isOpen()) consumables.open(workingConsumables);
@@ -198,11 +249,20 @@ function rebuildConsumables(): void {
 }
 rebuildConsumables();
 setJokers(workingJokers);   // 初始渲染入口（无牌组默认小丑，恒为空起步）
+refreshVouchers();          // 初始渲染优惠券入口（含牌组自带券）
 
 /** 小丑牌列表的唯一写入口：同步工作状态与入口展示（弹窗持有自己的副本，关闭后以这里为准） */
 function setJokers(items: JokerItem[]): void {
   workingJokers = items;
   jokersEntry.render(workingJokers);
+}
+
+/** 优惠券展示的唯一出口：牌组自带 + 自选合并成最终拥有集合（按游戏 order 排序）后重绘入口 */
+function refreshVouchers(): void {
+  const items = allVoucherKeys()
+    .sort((a, b) => (voucherByKey(a)?.order ?? 0) - (voucherByKey(b)?.order ?? 0))
+    .map(k => ({ key: k }));
+  vouchersEntry.render(items);
 }
 
 /** 牌堆手工编辑：右键删除；左键详情里的属性改动（type='modify'，牌对象已就地改好）；
@@ -255,6 +315,7 @@ app.append(
   consumables.root,
   jokers.root,
   jokerDetail.root,
+  vouchers.root,
   h('div', { class: 'toast', 'aria-live': 'polite' }),
 );
 
@@ -263,7 +324,7 @@ function exportSave(): void {
   try {
     const bytes = generateSave(currentDeck.key, currentStake, runParams.values(), workingCards, {
       items: workingConsumables,
-    }, { items: workingJokers });
+    }, { items: workingJokers }, { keys: allVoucherKeys() });
     const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -297,6 +358,7 @@ document.addEventListener('keydown', e => {
   if (consumables.root.classList.contains('show')) return;  // 消耗牌弹窗打开时方向键不切牌组
   if (jokers.root.classList.contains('show')) return;       // 小丑牌弹窗打开时方向键不切牌组
   if (jokerDetail.root.classList.contains('show')) return;  // 小丑定制弹窗打开时方向键不切牌组
+  if (vouchers.root.classList.contains('show')) return;     // 优惠券弹窗打开时方向键不切牌组
   if (e.target instanceof HTMLInputElement) return; // 参数输入框内方向键用于调数值
   if (e.key === 'ArrowLeft') deckSwitcher.prev();
   if (e.key === 'ArrowRight') deckSwitcher.next();
