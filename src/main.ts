@@ -94,10 +94,8 @@ const footer = h('footer', { class: 'app-footer' }, [
 
 let currentDeck = selectable[0];
 let currentStake = 1;
-// 工作牌堆：只在点「重置」时按当前牌组规则重建（切换牌组 / 改种子都不自动刷新），导出时写入存档
+// 工作牌堆：随牌组切换自动按新牌组规则重建（改种子不自动刷新；弹窗「重置」可手动重建），导出时写入存档
 let workingCards: DeckCard[] = [];
-/** 当前工作牌堆对应的牌组 key（与 currentDeck 不一致 = 牌堆需要重置） */
-let deckSource = currentDeck.key;
 /** 是否手工增删过牌面（重置后清零） */
 let deckEdited = false;
 // 工作消耗牌（逐牌记录）：随牌组切换按该牌组默认重建（魔法 = 愚者×2、幽灵 = 妖法×1，其余为空）。
@@ -224,9 +222,10 @@ for (const type of ['input', 'change'] as const) {
 const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
   currentDeck = def;
   runParams.refresh(def, currentStake);
+  rebuildDeck();          // 牌堆随牌组切换自动按新牌组规则重建
   rebuildConsumables();   // 消耗牌是牌组派生状态，与参数面板一起随牌组切换
   refreshVouchers();      // 牌组自带券同理随牌组派生（自选券保留）
-  // 牌堆保持原样（不自动按新牌组重建）；弹窗开着时只同步牌组名与描述
+  // 牌堆已随切换重建，弹窗开着时同步展示新牌堆与新牌组描述
   if (deckEditor.isOpen()) deckEditor.open(def, workingCards);
   if (consumables.isOpen()) consumables.open(workingConsumables);
 }, () => deckEditor.open(currentDeck, workingCards));
@@ -234,7 +233,6 @@ const deckSwitcher = createDeckSwitcher(selectable, imageUrl, 0, def => {
 /** 按当前牌组与种子重建默认牌堆（含古怪牌组的种子随机与开局洗牌） */
 function rebuildDeck(): void {
   workingCards = defaultDeckCards(currentDeck, runParams.seed());
-  deckSource = currentDeck.key;
   deckEdited = false;
   deckSwitcher.setCount(workingCards.length);
 }
@@ -335,9 +333,7 @@ function exportSave(): void {
     a.download = 'save.jkr';
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    const note = deckSource !== currentDeck.key
-      ? '（牌堆未重置，仍为原牌组配置）'
-      : deckEdited ? '（牌堆已手工调整）' : '';
+    const note = deckEdited ? '（牌堆已手工调整）' : '';
     showToast(`已导出 save.jkr（${currentDeck.zhName} · ${STAKES[currentStake - 1].zhName} · ${workingCards.length} 张牌）${note}`);
   } catch (err) {
     showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
