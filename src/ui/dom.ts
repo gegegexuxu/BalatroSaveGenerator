@@ -2,7 +2,7 @@
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Partial<{
-    class: string; text: string; html: string; src: string; alt: string;
+    class: string; text: string; html: string; src: string; href: string; alt: string;
     'aria-label': string; 'aria-live': string;
   }> = {},
   children: HTMLElement[] = [],
@@ -12,6 +12,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   if (attrs.text !== undefined) el.textContent = attrs.text;
   if (attrs.html !== undefined) el.innerHTML = attrs.html;
   if (attrs.src) el.setAttribute('src', attrs.src);
+  if (attrs.href) el.setAttribute('href', attrs.href);
   if (attrs.alt) el.setAttribute('alt', attrs.alt);
   if (attrs['aria-label']) el.setAttribute('aria-label', attrs['aria-label']);
   if (attrs['aria-live']) el.setAttribute('aria-live', attrs['aria-live']);

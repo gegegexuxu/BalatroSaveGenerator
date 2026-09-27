@@ -87,7 +87,10 @@ const header = h('header', { class: 'app-header' }, [
 const exportBtn = h('button', { class: 'btn btn-blue btn-export', text: '导出存档' });
 const helpBtn = h('button', { class: 'btn btn-ghost', text: '使用说明' });
 
-const footer = h('footer', { class: 'app-footer', text: '适用游戏版本 1.0.1o · 导出 save.jkr · 放入 %APPDATA%\\Balatro\\<存档位> 后点「继续游戏」' });
+const footer = h('footer', { class: 'app-footer' }, [
+  h('span', { text: '适用游戏版本 1.0.1o · 问题反馈：' }),
+  h('a', { class: 'app-footer-mail', href: 'mailto:weslie2048@foxmail.com', text: 'weslie2048@foxmail.com' }),
+]);
 
 let currentDeck = selectable[0];
 let currentStake = 1;
