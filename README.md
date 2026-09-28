@@ -1,4 +1,4 @@
-# 小丑牌存档生成器 · Balatro Save Generator
+# 小丑牌存档生成器 · Balatro Save Generator(https://www.gexu.games/tools/BalatroSaveGenerator)
 
 作者：[衔榆](https://www.gexu.games/)
 
